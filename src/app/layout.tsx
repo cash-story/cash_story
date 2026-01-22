@@ -46,6 +46,7 @@ export default function RootLayout({
                 Таны санхүүгийн мэдээлэл нууцлагдсан бөгөөд хадгалагдахгүй
               </p>
             </div>
+            ``
           </footer>
         </div>
       </body>

@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { buildAnalysisPrompt } from "./prompts";
-import { analysisResultSchema } from "@/schemas/analysis";
-import type { AnalysisResult } from "@/types";
+import { financialRoadmapSchema } from "@/schemas/analysis";
+import type { FinancialRoadmapResult } from "@/types";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -9,7 +9,7 @@ const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 export async function analyzeStatement(
   extractedText: string,
-): Promise<AnalysisResult> {
+): Promise<FinancialRoadmapResult> {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY тохируулаагүй байна");
   }
@@ -51,12 +51,13 @@ export async function analyzeStatement(
     }
 
     // Validate with Zod
-    const validated = analysisResultSchema.safeParse(parsed);
+    const validated = financialRoadmapSchema.safeParse(parsed);
     if (!validated.success) {
+      console.error("Validation errors:", validated.error.issues);
       throw new Error("AI хариу буруу бүтэцтэй байна");
     }
 
-    return validated.data as AnalysisResult;
+    return validated.data as FinancialRoadmapResult;
   } catch (error) {
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();

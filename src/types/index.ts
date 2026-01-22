@@ -19,18 +19,57 @@ export interface AnalysisSummary {
   currency: string;
 }
 
-export interface AnalysisResult {
+// Rating system based on Ganbat model
+export interface Rating {
+  grade: "AA" | "A" | "B" | "C" | "D" | "E";
+  status_mn: string;
+  description: string;
+}
+
+// Financial milestone
+export interface Milestone {
+  amount_mnt: number;
+  years_to_reach: number;
+}
+
+// 4 Milestones to Financial Freedom
+export interface Milestones {
+  security: Milestone; // Санхүүгийн хамгаалалт - 6 months expenses
+  comfort: Milestone; // Санхүүгийн тав тух - 50% passive income
+  freedom: Milestone; // Санхүүгийн эрх чөлөө - 100% passive income
+  super_freedom: Milestone; // Санхүүгийн супер эрх чөлөө - ₮1B+ target
+}
+
+// Investment Strategy - Мянгат малчин
+export interface Strategy {
+  philosophy: string;
+  advice_items: string[];
+}
+
+// Wealth Projection
+export interface Projection {
+  year: number;
+  projected_value: number;
+}
+
+// Main Financial Roadmap Result
+export interface FinancialRoadmapResult {
+  // Basic summary from bank statement
   summary: AnalysisSummary;
   monthlyBreakdown: MonthlySummary[];
-  topIncomeCategories: Category[];
-  topExpenseCategories: Category[];
-  insights: string[];
-  warnings?: string[];
+
+  // Financial Freedom data
+  rating: Rating;
+  milestones: Milestones;
+  strategy: Strategy;
+  projections: Projection[];
+
+  // Bank context
   bankName: string | null;
 }
 
 export interface ActionState {
   success: boolean;
-  data?: AnalysisResult;
+  data?: FinancialRoadmapResult;
   error?: string;
 }
