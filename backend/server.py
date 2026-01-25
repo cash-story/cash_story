@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 FastAPI server for fast PDF text extraction.
-Run with: uvicorn scripts.server:app --host 0.0.0.0 --port 8001
+Run with: uvicorn server:app --host 0.0.0.0 --port 8001
 """
 
 import io
+from typing import Optional
 
 import pdfplumber
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -29,8 +30,8 @@ app.add_middleware(
 
 class ExtractionResult(BaseModel):
     success: bool
-    text: str | None = None
-    error: str | None = None
+    text: Optional[str] = None
+    error: Optional[str] = None
     pages: int = 0
 
 

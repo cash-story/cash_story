@@ -3,14 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { PdfUpload } from "@/components/pdf-upload";
-import { FinancialRoadmap } from "@/components/financial-roadmap";
+import { FinancialGuide } from "@/components/financial-guide";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import type { ActionState, FinancialRoadmapResult } from "@/types";
+import type { ActionState, FinancialGuideReport } from "@/types";
 import { FileText, Shield, Zap, ArrowLeft, Target } from "lucide-react";
 
 export default function UploadPage() {
-  const [result, setResult] = useState<FinancialRoadmapResult | null>(null);
+  const [result, setResult] = useState<FinancialGuideReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleAnalysisComplete = (state: ActionState) => {
@@ -29,7 +29,7 @@ export default function UploadPage() {
 
   // Show results if available
   if (result) {
-    return <FinancialRoadmap result={result} onReset={handleReset} />;
+    return <FinancialGuide report={result} onReset={handleReset} />;
   }
 
   // Show upload form
@@ -49,11 +49,11 @@ export default function UploadPage() {
           <Target className="w-8 h-8 text-primary" />
         </div>
         <h1 className="text-4xl font-bold tracking-tight">
-          Санхүүгийн Эрх Чөлөөний Төлөвлөгөө
+          Санхүүгийн Удирдамж Тайлан
         </h1>
         <p className="text-lg text-muted-foreground">
-          PDF банкны хуулгаа оруулж, хувийн санхүүгийн үнэлгээ, зорилго,
-          стратеги авах
+          PDF банкны хуулгаа оруулж, дэлгэрэнгүй санхүүгийн шинжилгээ, эрсдэлийн
+          үнэлгээ, зөвлөмжүүд авах
         </p>
       </div>
 
@@ -74,7 +74,7 @@ export default function UploadPage() {
           </div>
           <div>
             <p className="font-medium text-sm">AI шинжилгээ</p>
-            <p className="text-xs text-muted-foreground">Секундын дотор</p>
+            <p className="text-xs text-muted-foreground">Дэлгэрэнгүй тайлан</p>
           </div>
         </div>
         <div className="flex items-center gap-3 p-4 rounded-lg border bg-card">
