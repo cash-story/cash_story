@@ -1,0 +1,33 @@
+"""
+SQLite database setup using aiosqlite for async operations.
+"""
+
+import os
+
+import aiosqlite
+
+DB_DIR = os.path.join(os.path.dirname(__file__), "data")
+DB_PATH = os.path.join(DB_DIR, "app.db")
+
+
+async def init_db():
+    """Create tables if they don't exist."""
+    os.makedirs(DB_DIR, exist_ok=True)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS analyses (
+                id TEXT PRIMARY KEY,
+                file_name TEXT NOT NULL,
+                bank_name TEXT,
+                result TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        await db.commit()
+
+
+async def get_db():
+    """Get a database connection."""
+    db = await aiosqlite.connect(DB_PATH)
+    db.row_factory = aiosqlite.Row
+    return db

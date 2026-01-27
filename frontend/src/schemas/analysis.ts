@@ -96,7 +96,10 @@ const behaviorPatternSchema = z.object({
   ]),
   detected: z.boolean(),
   severity: z.enum(["low", "medium", "high"]).nullable(),
-  description: z.string(),
+  description: z
+    .string()
+    .nullable()
+    .transform((val) => val ?? ""),
 });
 
 const behaviorPatternsSchema = z.object({

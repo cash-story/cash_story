@@ -46,3 +46,7 @@ bun.lock
 .venv/
 __pycache__/
 *.pyc
+
+# sqlite
+*.db
+backend/data/
