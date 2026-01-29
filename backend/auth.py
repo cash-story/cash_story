@@ -2,7 +2,6 @@
 Authentication utilities for verifying Google OAuth tokens.
 """
 
-import os
 from typing import Optional
 
 import httpx
@@ -30,25 +29,21 @@ async def verify_google_token(token: str) -> dict:
 
 async def get_user_by_google_id(google_id: str) -> Optional[dict]:
     """Get user from database by Google ID."""
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "SELECT id, google_id, email, name, picture, created_at FROM users WHERE google_id = ?",
-            (google_id,),
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, google_id, email, name, picture, created_at FROM users WHERE google_id = $1",
+            google_id,
         )
-        row = await cursor.fetchone()
         if row:
             return {
-                "id": row["id"],
+                "id": str(row["id"]),
                 "google_id": row["google_id"],
                 "email": row["email"],
                 "name": row["name"],
                 "picture": row["picture"],
-                "created_at": row["created_at"],
+                "created_at": row["created_at"].isoformat(),
             }
         return None
-    finally:
-        await db.close()
 
 
 async def get_current_user(

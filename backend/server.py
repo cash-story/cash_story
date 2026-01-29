@@ -7,21 +7,19 @@ Run with: uvicorn server:app --host 0.0.0.0 --port 8001
 import io
 import json
 import os
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
 import pdfplumber
-from auth import get_current_user, require_auth, verify_google_token
-from database import get_db, init_db
+from auth import require_auth, verify_google_token
+from database import close_db, get_db, init_db
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from models import (
     AnalysisCreate,
     AnalysisListItem,
     AnalysisResponse,
-    UserCreate,
     UserResponse,
 )
 from pydantic import BaseModel
@@ -29,9 +27,10 @@ from pydantic import BaseModel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup."""
+    """Initialize database on startup, close on shutdown."""
     await init_db()
     yield
+    await close_db()
 
 
 app = FastAPI(
@@ -170,51 +169,51 @@ async def google_auth(data: GoogleAuthRequest):
     if not google_id or not email:
         raise HTTPException(status_code=400, detail="Invalid Google token")
 
-    db = await get_db()
-    try:
+    async with get_db() as conn:
         # Check if user exists
-        cursor = await db.execute(
-            "SELECT id, google_id, email, name, picture, created_at FROM users WHERE google_id = ?",
-            (google_id,),
+        row = await conn.fetchrow(
+            "SELECT id, google_id, email, name, picture, created_at FROM users WHERE google_id = $1",
+            google_id,
         )
-        row = await cursor.fetchone()
 
         if row:
             # Update user info (in case name/picture changed)
-            await db.execute(
-                "UPDATE users SET name = ?, picture = ? WHERE google_id = ?",
-                (name, picture, google_id),
+            await conn.execute(
+                "UPDATE users SET name = $1, picture = $2 WHERE google_id = $3",
+                name,
+                picture,
+                google_id,
             )
-            await db.commit()
             return UserResponse(
-                id=row["id"],
+                id=str(row["id"]),
                 google_id=row["google_id"],
                 email=row["email"],
                 name=name,
                 picture=picture,
-                created_at=row["created_at"],
+                created_at=row["created_at"].isoformat(),
             )
 
         # Create new user
-        user_id = str(uuid.uuid4())
-        created_at = datetime.now(timezone.utc).isoformat()
-
-        await db.execute(
-            "INSERT INTO users (id, google_id, email, name, picture, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, google_id, email, name, picture, created_at),
+        row = await conn.fetchrow(
+            """
+            INSERT INTO users (google_id, email, name, picture)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, google_id, email, name, picture, created_at
+            """,
+            google_id,
+            email,
+            name,
+            picture,
         )
-        await db.commit()
 
         return UserResponse(
-            id=user_id,
-            google_id=google_id,
-            email=email,
-            name=name,
-            picture=picture,
-            created_at=created_at,
+            id=str(row["id"]),
+            google_id=row["google_id"],
+            email=row["email"],
+            name=row["name"],
+            picture=row["picture"],
+            created_at=row["created_at"].isoformat(),
         )
-    finally:
-        await db.close()
 
 
 @app.get("/users/me", response_model=UserResponse)
@@ -229,55 +228,53 @@ async def get_me(user: dict = Depends(require_auth)):
 @app.post("/analyses", response_model=AnalysisResponse, status_code=201)
 async def save_analysis(data: AnalysisCreate, user: dict = Depends(require_auth)):
     """Save a financial analysis result (requires auth)."""
-    analysis_id = str(uuid.uuid4())
-    created_at = datetime.now(timezone.utc).isoformat()
-
-    db = await get_db()
-    try:
-        await db.execute(
-            "INSERT INTO analyses (id, user_id, file_name, bank_name, result, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                analysis_id,
-                user["id"],
-                data.file_name,
-                data.bank_name,
-                json.dumps(data.result, ensure_ascii=False),
-                created_at,
-            ),
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO analyses (user_id, file_name, bank_name, result)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, user_id, file_name, bank_name, result, created_at
+            """,
+            user["id"],
+            data.file_name,
+            data.bank_name,
+            json.dumps(data.result, ensure_ascii=False),
         )
-        await db.commit()
-    finally:
-        await db.close()
 
     return AnalysisResponse(
-        id=analysis_id,
-        user_id=user["id"],
-        file_name=data.file_name,
-        bank_name=data.bank_name,
-        result=data.result,
-        created_at=created_at,
+        id=str(row["id"]),
+        user_id=str(row["user_id"]),
+        file_name=row["file_name"],
+        bank_name=row["bank_name"],
+        result=json.loads(row["result"])
+        if isinstance(row["result"], str)
+        else row["result"],
+        created_at=row["created_at"].isoformat(),
     )
 
 
 @app.get("/analyses", response_model=list[AnalysisListItem])
 async def list_analyses(limit: int = 20, user: dict = Depends(require_auth)):
     """List current user's analyses (requires auth)."""
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "SELECT id, file_name, bank_name, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-            (user["id"], limit),
+    async with get_db() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, file_name, bank_name, created_at
+            FROM analyses
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            user["id"],
+            limit,
         )
-        rows = await cursor.fetchall()
-    finally:
-        await db.close()
 
     return [
         AnalysisListItem(
-            id=row["id"],
+            id=str(row["id"]),
             file_name=row["file_name"],
             bank_name=row["bank_name"],
-            created_at=row["created_at"],
+            created_at=row["created_at"].isoformat(),
         )
         for row in rows
     ]
@@ -286,44 +283,44 @@ async def list_analyses(limit: int = 20, user: dict = Depends(require_auth)):
 @app.get("/analyses/{analysis_id}", response_model=AnalysisResponse)
 async def get_analysis(analysis_id: str, user: dict = Depends(require_auth)):
     """Get a saved analysis by ID (requires auth, must own the analysis)."""
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "SELECT id, user_id, file_name, bank_name, result, created_at FROM analyses WHERE id = ? AND user_id = ?",
-            (analysis_id, user["id"]),
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, user_id, file_name, bank_name, result, created_at
+            FROM analyses
+            WHERE id = $1 AND user_id = $2
+            """,
+            analysis_id,
+            user["id"],
         )
-        row = await cursor.fetchone()
-    finally:
-        await db.close()
 
     if not row:
         raise HTTPException(status_code=404, detail="Шинжилгээ олдсонгүй")
 
     return AnalysisResponse(
-        id=row["id"],
-        user_id=row["user_id"],
+        id=str(row["id"]),
+        user_id=str(row["user_id"]),
         file_name=row["file_name"],
         bank_name=row["bank_name"],
-        result=json.loads(row["result"]),
-        created_at=row["created_at"],
+        result=json.loads(row["result"])
+        if isinstance(row["result"], str)
+        else row["result"],
+        created_at=row["created_at"].isoformat(),
     )
 
 
 @app.delete("/analyses/{analysis_id}")
 async def delete_analysis(analysis_id: str, user: dict = Depends(require_auth)):
     """Delete a saved analysis (requires auth, must own the analysis)."""
-    db = await get_db()
-    try:
-        cursor = await db.execute(
-            "DELETE FROM analyses WHERE id = ? AND user_id = ?",
-            (analysis_id, user["id"]),
+    async with get_db() as conn:
+        result = await conn.execute(
+            "DELETE FROM analyses WHERE id = $1 AND user_id = $2",
+            analysis_id,
+            user["id"],
         )
-        await db.commit()
-        deleted = cursor.rowcount
-    finally:
-        await db.close()
 
-    if not deleted:
+    # Check if any row was deleted
+    if result == "DELETE 0":
         raise HTTPException(status_code=404, detail="Шинжилгээ олдсонгүй")
 
     return {"deleted": True}
