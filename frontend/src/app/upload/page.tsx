@@ -127,8 +127,10 @@ export default function UploadPage() {
             <Shield className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <p className="font-medium text-sm">Нууцлал</p>
-            <p className="text-xs text-muted-foreground">Хадгалагдахгүй</p>
+            <p className="font-medium text-sm">Аюулгүй</p>
+            <p className="text-xs text-muted-foreground">
+              Зөвхөн танд харагдана
+            </p>
           </div>
         </div>
       </div>

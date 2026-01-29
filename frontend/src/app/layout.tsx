@@ -49,7 +49,7 @@ export default function RootLayout({
             <footer className="border-t mt-auto">
               <div className="container mx-auto px-4 py-6">
                 <p className="text-center text-sm text-muted-foreground">
-                  Таны санхүүгийн мэдээлэл нууцлагдсан бөгөөд хадгалагдахгүй
+                  Таны мэдээлэл аюулгүй хадгалагдаж, зөвхөн танд харагдана
                 </p>
               </div>
             </footer>
