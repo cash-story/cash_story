@@ -55,11 +55,11 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-green-500" />
-            Бүртгэл шаардлагагүй
+            Google-ээр нэвтрэх
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-green-500" />
-            Мэдээлэл хадгалагдахгүй
+            Түүхээ хадгалах
           </div>
         </div>
       </section>
@@ -137,8 +137,7 @@ export default function Home() {
               </div>
               <h3 className="text-lg font-semibold">Аюулгүй байдал</h3>
               <p className="text-sm text-muted-foreground">
-                Таны файл серверт хадгалагдахгүй бөгөөд шинжилгээний дараа
-                устгагдана.
+                Таны мэдээлэл аюулгүй хадгалагдаж, зөвхөн танд харагдана.
               </p>
             </CardContent>
           </Card>
