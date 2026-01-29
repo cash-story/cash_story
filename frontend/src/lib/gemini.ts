@@ -30,7 +30,7 @@ export async function analyzeStatement(
   const prompt = buildAnalysisPrompt(extractedText);
 
   try {
-    console.log("[Gemini] Sending request to model:", "gemini-2.0-flash");
+    console.log("[Gemini] Sending request to model:", "gemini-2.5-flash");
     console.log("[Gemini] Prompt length:", prompt.length);
 
     const result = await model.generateContent(prompt);

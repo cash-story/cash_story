@@ -1,6 +1,18 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 
+declare module "next-auth" {
+  interface Session {
+    accessToken?: string;
+    user: {
+      id?: string;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+    };
+  }
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
     Google({
@@ -18,10 +30,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return token;
     },
     async session({ session, token }) {
-      // Add Google ID to session
+      // Add Google ID and access token to session
       if (session.user) {
         session.user.id = token.googleId as string;
       }
+      session.accessToken = token.accessToken as string;
       return session;
     },
   },

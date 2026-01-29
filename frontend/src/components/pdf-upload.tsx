@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
+import { useSession } from "next-auth/react";
 import { Upload, FileText, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,16 +10,47 @@ import { analyzePdf } from "@/actions/analyze-pdf";
 import type { ActionState } from "@/types";
 import { cn } from "@/lib/utils";
 
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
+
 interface PdfUploadProps {
   onAnalysisComplete: (result: ActionState) => void;
 }
 
 export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
+  const { data: session } = useSession();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Save analysis to backend
+  const saveAnalysis = useCallback(
+    async (fileName: string, result: Record<string, unknown>) => {
+      if (!session?.accessToken) return;
+
+      try {
+        await fetch(`${BACKEND_URL}/analyses`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.accessToken}`,
+          },
+          body: JSON.stringify({
+            file_name: fileName,
+            bank_name:
+              (result as { overview?: { bankName?: string } }).overview
+                ?.bankName || null,
+            result: result,
+          }),
+        });
+      } catch (err) {
+        console.error("Failed to save analysis:", err);
+      }
+    },
+    [session],
+  );
 
   const handleFile = useCallback((selectedFile: File) => {
     setError(null);
@@ -47,7 +79,7 @@ export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
         handleFile(droppedFile);
       }
     },
-    [handleFile]
+    [handleFile],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -67,7 +99,7 @@ export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
         handleFile(selectedFile);
       }
     },
-    [handleFile]
+    [handleFile],
   );
 
   const handleRemoveFile = useCallback(() => {
@@ -93,6 +125,10 @@ export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
       if (!result.success) {
         setError(result.error || "Алдаа гарлаа");
       } else {
+        // Save to backend
+        if (result.data) {
+          await saveAnalysis(file.name, result.data as Record<string, unknown>);
+        }
         onAnalysisComplete(result);
         setFile(null);
         if (fileInputRef.current) {
@@ -104,7 +140,7 @@ export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [file, onAnalysisComplete]);
+  }, [file, onAnalysisComplete, saveAnalysis]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + " B";
@@ -127,7 +163,7 @@ export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
               isDragging
                 ? "border-primary bg-primary/5"
                 : "border-muted-foreground/25 hover:border-primary/50",
-              file && "cursor-default"
+              file && "cursor-default",
             )}
           >
             <input
@@ -216,8 +252,8 @@ export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
       {isLoading && (
         <Alert>
           <AlertDescription>
-            Таны банкны хуулгыг AI ашиглан шинжилж байна. Энэ хэдэн секунд үргэлжилж
-            болно...
+            Таны банкны хуулгыг AI ашиглан шинжилж байна. Энэ хэдэн секунд
+            үргэлжилж болно...
           </AlertDescription>
         </Alert>
       )}
