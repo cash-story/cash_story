@@ -127,7 +127,10 @@ export function PdfUpload({ onAnalysisComplete }: PdfUploadProps) {
       } else {
         // Save to backend
         if (result.data) {
-          await saveAnalysis(file.name, result.data as Record<string, unknown>);
+          await saveAnalysis(
+            file.name,
+            result.data as unknown as Record<string, unknown>,
+          );
         }
         onAnalysisComplete(result);
         setFile(null);
