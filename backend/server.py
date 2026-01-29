@@ -38,10 +38,15 @@ app = FastAPI(
 allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://cashstory-production.up.railway.app",
 ]
 frontend_url = os.environ.get("FRONTEND_URL")
 if frontend_url:
     allowed_origins.append(frontend_url)
+# Allow all Vercel preview deployments
+vercel_url = os.environ.get("VERCEL_URL")
+if vercel_url:
+    allowed_origins.append(f"https://{vercel_url}")
 
 app.add_middleware(
     CORSMiddleware,
