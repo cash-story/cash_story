@@ -6,7 +6,13 @@ import os
 
 import aiosqlite
 
-DB_DIR = os.path.join(os.path.dirname(__file__), "data")
+# Use DATA_DIR env var, or /tmp for Railway (ephemeral), or local data/ for dev
+DB_DIR = os.environ.get(
+    "DATA_DIR",
+    "/tmp"
+    if os.environ.get("RAILWAY_ENVIRONMENT")
+    else os.path.join(os.path.dirname(__file__), "data"),
+)
 DB_PATH = os.path.join(DB_DIR, "app.db")
 
 
