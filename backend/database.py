@@ -20,13 +20,27 @@ async def init_db():
     """Create tables if they don't exist."""
     os.makedirs(DB_DIR, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
+        # Users table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                google_id TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT,
+                picture TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        # Analyses table with user_id
         await db.execute("""
             CREATE TABLE IF NOT EXISTS analyses (
                 id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
                 file_name TEXT NOT NULL,
                 bank_name TEXT,
                 result TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
             )
         """)
         await db.commit()
