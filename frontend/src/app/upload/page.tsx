@@ -2,14 +2,16 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useSession, signIn } from "next-auth/react";
 import { PdfUpload } from "@/components/pdf-upload";
 import { FinancialGuide } from "@/components/financial-guide";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { ActionState, FinancialGuideReport } from "@/types";
-import { FileText, Shield, Zap, ArrowLeft, Target } from "lucide-react";
+import { FileText, Shield, Zap, ArrowLeft, Target, LogIn } from "lucide-react";
 
 export default function UploadPage() {
+  const { data: session, status } = useSession();
   const [result, setResult] = useState<FinancialGuideReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +34,50 @@ export default function UploadPage() {
     return <FinancialGuide report={result} onReset={handleReset} />;
   }
 
-  // Show upload form
+  // Show loading while checking auth
+  if (status === "loading") {
+    return (
+      <div className="max-w-2xl mx-auto space-y-8">
+        <div className="flex items-center justify-center py-12">
+          <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
+  // Show login prompt if not authenticated
+  if (!session) {
+    return (
+      <div className="max-w-2xl mx-auto space-y-8">
+        {/* Back button */}
+        <Button variant="ghost" asChild>
+          <Link href="/">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Нүүр хуудас
+          </Link>
+        </Button>
+
+        {/* Login prompt */}
+        <div className="text-center space-y-6 py-12">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mx-auto">
+            <LogIn className="w-8 h-8 text-primary" />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Нэвтрэх шаардлагатай
+          </h1>
+          <p className="text-lg text-muted-foreground max-w-md mx-auto">
+            Санхүүгийн шинжилгээ хийхийн тулд Google хаягаар нэвтэрнэ үү
+          </p>
+          <Button size="lg" onClick={() => signIn("google")}>
+            <LogIn className="w-5 h-5 mr-2" />
+            Google-ээр нэвтрэх
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show upload form (authenticated)
   return (
     <div className="max-w-2xl mx-auto space-y-8">
       {/* Back button */}
