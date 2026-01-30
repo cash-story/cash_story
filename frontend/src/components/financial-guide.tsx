@@ -18,7 +18,7 @@ import { Building2, RefreshCw, Calendar, Target, FileText } from "lucide-react";
 
 interface FinancialGuideProps {
   report: FinancialGuideReport;
-  onReset: () => void;
+  onReset?: () => void;
 }
 
 export function FinancialGuide({ report, onReset }: FinancialGuideProps) {
@@ -60,10 +60,12 @@ export function FinancialGuide({ report, onReset }: FinancialGuideProps) {
             <span className="text-xs">({overview.totalMonths} сар)</span>
           </div>
         </div>
-        <Button variant="outline" onClick={onReset}>
-          <RefreshCw className="w-4 h-4" />
-          Шинэ файл
-        </Button>
+        {onReset && (
+          <Button variant="outline" onClick={onReset}>
+            <RefreshCw className="w-4 h-4" />
+            Шинэ файл
+          </Button>
+        )}
       </div>
 
       {/* Summary Verdict - Most important at top */}

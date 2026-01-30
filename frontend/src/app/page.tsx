@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,8 +14,15 @@ import {
   Landmark,
   Crown,
 } from "lucide-react";
+import { auth } from "@/lib/auth";
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+
+  // Redirect logged-in users to dashboard
+  if (session) {
+    redirect("/dashboard");
+  }
   return (
     <div className="space-y-16">
       {/* Hero Section */}
@@ -37,7 +45,7 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Button size="lg" asChild>
-            <Link href="/upload">
+            <Link href="/dashboard">
               Төлөвлөгөө гаргах
               <ArrowRight className="w-4 h-4 ml-2" />
             </Link>
@@ -292,7 +300,7 @@ export default function Home() {
               Одоо л банкны хуулгаа оруулж, хувийн санхүүгийн төлөвлөгөөгөө авах
             </p>
             <Button size="lg" asChild>
-              <Link href="/upload">
+              <Link href="/dashboard">
                 Үнэгүй эхлүүлэх
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Link>

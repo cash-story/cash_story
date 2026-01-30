@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 import { Providers } from "./providers";
 import { AuthButton } from "@/components/auth-button";
@@ -29,14 +30,14 @@ export default function RootLayout({
             <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               <div className="container mx-auto px-4 py-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                  <Link href="/dashboard" className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
                       <span className="text-primary-foreground font-bold text-sm">
                         ₮
                       </span>
                     </div>
-                    <span className="font-bold text-xl">МөнгөнТойм</span>
-                  </div>
+                    <span className="font-bold text-xl">Cash Story</span>
+                  </Link>
                   <AuthButton />
                 </div>
               </div>

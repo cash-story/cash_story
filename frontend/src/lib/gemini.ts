@@ -1,5 +1,9 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { buildAnalysisPrompt } from "./prompts";
+import {
+  buildPart1Prompt,
+  buildPart2Prompt,
+  buildPart3Prompt,
+} from "./prompts";
 import { financialGuideReportSchema } from "@/schemas/analysis";
 import type { FinancialGuideReport } from "@/types";
 
@@ -11,6 +15,67 @@ console.log("[Gemini] API Key prefix:", apiKey?.substring(0, 10) + "...");
 
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
+// Helper to make a single Gemini request
+async function makeGeminiRequest(
+  prompt: string,
+  partName: string,
+): Promise<unknown> {
+  if (!genAI) {
+    throw new Error("GEMINI_API_KEY тохируулаагүй байна");
+  }
+
+  // Use gemini-1.5-pro for higher output token limit
+  const modelName = "gemini-1.5-pro";
+  const model = genAI.getGenerativeModel({
+    model: modelName,
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 16384,
+      responseMimeType: "application/json",
+    },
+  });
+
+  console.log(
+    `[Gemini ${partName}] Sending request, prompt length:`,
+    prompt.length,
+  );
+
+  const result = await model.generateContent(prompt);
+  const response = result.response;
+
+  const finishReason = response.candidates?.[0]?.finishReason;
+  console.log(`[Gemini ${partName}] Finish reason:`, finishReason);
+
+  if (finishReason === "MAX_TOKENS") {
+    throw new Error(`${partName}: AI хариу хэт урт байна`);
+  }
+
+  const text = response.text();
+  console.log(`[Gemini ${partName}] Response length:`, text.length);
+
+  // Parse JSON
+  let cleanedText = text.trim();
+  if (cleanedText.startsWith("```json")) {
+    cleanedText = cleanedText.slice(7);
+  } else if (cleanedText.startsWith("```")) {
+    cleanedText = cleanedText.slice(3);
+  }
+  if (cleanedText.endsWith("```")) {
+    cleanedText = cleanedText.slice(0, -3);
+  }
+  cleanedText = cleanedText.trim();
+
+  try {
+    return JSON.parse(cleanedText);
+  } catch {
+    console.error(
+      `[Gemini ${partName}] Failed to parse JSON:`,
+      cleanedText.substring(0, 300),
+    );
+    throw new Error(`${partName}: JSON хөрвүүлэлт амжилтгүй`);
+  }
+}
+
 export async function analyzeStatement(
   extractedText: string,
 ): Promise<FinancialGuideReport> {
@@ -18,58 +83,55 @@ export async function analyzeStatement(
     throw new Error("GEMINI_API_KEY тохируулаагүй байна");
   }
 
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 65536,
-      responseMimeType: "application/json",
-    },
-  });
-
-  const prompt = buildAnalysisPrompt(extractedText);
-
   try {
-    console.log("[Gemini] Sending request to model:", "gemini-2.5-flash");
-    console.log("[Gemini] Prompt length:", prompt.length);
+    console.log("[Gemini] Starting chunked analysis...");
 
-    const result = await model.generateContent(prompt);
-    console.log("[Gemini] Got result");
+    // Part 1: Core financial data
+    const part1Prompt = buildPart1Prompt(extractedText);
+    const part1Result = (await makeGeminiRequest(
+      part1Prompt,
+      "Part1",
+    )) as Record<string, unknown>;
+    console.log("[Gemini] Part 1 complete");
 
-    const response = result.response;
-    console.log("[Gemini] Response candidates:", response.candidates?.length);
+    // Part 2: Behavior, risks, recommendations (needs Part 1 context)
+    const part2Prompt = buildPart2Prompt(
+      extractedText,
+      JSON.stringify(part1Result),
+    );
+    const part2Result = (await makeGeminiRequest(
+      part2Prompt,
+      "Part2",
+    )) as Record<string, unknown>;
+    console.log("[Gemini] Part 2 complete");
 
-    const text = response.text();
-    console.log("[Gemini] Response text length:", text.length);
+    // Part 3: Milestones, projections, strategy, verdict (needs Part 1 & 2 context)
+    const part3Prompt = buildPart3Prompt(
+      JSON.stringify(part1Result),
+      JSON.stringify(part2Result),
+    );
+    const part3Result = (await makeGeminiRequest(
+      part3Prompt,
+      "Part3",
+    )) as Record<string, unknown>;
+    console.log("[Gemini] Part 3 complete");
 
-    // Parse JSON response
-    let parsed: unknown;
-    try {
-      // Clean the response if it has markdown code blocks
-      let cleanedText = text.trim();
-      if (cleanedText.startsWith("```json")) {
-        cleanedText = cleanedText.slice(7);
-      } else if (cleanedText.startsWith("```")) {
-        cleanedText = cleanedText.slice(3);
-      }
-      if (cleanedText.endsWith("```")) {
-        cleanedText = cleanedText.slice(0, -3);
-      }
-      cleanedText = cleanedText.trim();
+    // Combine all parts
+    const combined: Record<string, unknown> = {
+      ...part1Result,
+      ...part2Result,
+      ...part3Result,
+    };
 
-      parsed = JSON.parse(cleanedText);
-    } catch {
-      console.error("Failed to parse JSON:", text.substring(0, 500));
-      throw new Error("AI хариуг JSON болгон хөрвүүлж чадсангүй");
-    }
+    console.log("[Gemini] Combined result keys:", Object.keys(combined));
 
     // Validate with Zod
-    const validated = financialGuideReportSchema.safeParse(parsed);
+    const validated = financialGuideReportSchema.safeParse(combined);
     if (!validated.success) {
       console.error("Validation errors:", validated.error.issues);
       console.error(
         "Received data:",
-        JSON.stringify(parsed, null, 2).substring(0, 1000),
+        JSON.stringify(combined, null, 2).substring(0, 1000),
       );
       throw new Error(
         "AI хариу буруу бүтэцтэй байна: " +
@@ -82,12 +144,9 @@ export async function analyzeStatement(
     return validated.data as FinancialGuideReport;
   } catch (error) {
     console.error("[Gemini] ERROR:", error);
-    console.error("[Gemini] Error type:", typeof error);
-    console.error("[Gemini] Error constructor:", error?.constructor?.name);
 
     if (error instanceof Error) {
       console.error("[Gemini] Error message:", error.message);
-      console.error("[Gemini] Error stack:", error.stack);
 
       const msg = error.message.toLowerCase();
 
@@ -103,11 +162,7 @@ export async function analyzeStatement(
         msg.includes("rate") ||
         msg.includes("resource_exhausted")
       ) {
-        throw new Error(
-          "API хязгаарлалтад хүрсэн. Түр хүлээнэ үү. (Original: " +
-            error.message +
-            ")",
-        );
+        throw new Error("API хязгаарлалтад хүрсэн. Түр хүлээнэ үү.");
       }
       if (msg.includes("permission") || msg.includes("denied")) {
         throw new Error("API хандах эрхгүй байна. API түлхүүрээ шалгана уу.");

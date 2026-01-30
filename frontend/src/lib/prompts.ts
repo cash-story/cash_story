@@ -1,210 +1,107 @@
-export const FINANCIAL_GUIDE_PROMPT = `Role: Та Монголын Мэргэжлийн Санхүүгийн Зөвлөх бөгөөд банкны хуулгын мэдээллийг дэлгэрэнгүй "Санхүүгийн Удирдамж Тайлан" болгон хувиргах үүрэгтэй.
+// ============================================================================
+// CHUNKED PROMPTS FOR GEMINI 2.5 FLASH (to avoid MAX_TOKENS)
+// ============================================================================
 
-Оролтын өгөгдөл: Банкны хуулгын текст (гүйлгээний жагсаалт).
+const BASE_RULES = `Дүрмүүд:
+- Бүх тоон утга бүхэл тоо (years_to_reach-с бусад)
+- years_to_reach нэг оронтой бутархай (жишээ: 1.5)
+- Бүх текст МОНГОЛ хэлээр
+- ЗӨВХӨН JSON хариулна
+- Тайлбар 50 тэмдэгтээс бага байх
+- insights/warnings 2 элементээс ихгүй`;
 
-================================================================================
-ШИНЖИЛГЭЭНИЙ ДҮРЭМ
-================================================================================
+// Part 1: Core financial data (overview, score, income, expense, cashflow)
+export const PROMPT_PART1 = `Та санхүүгийн шинжээч. Банкны хуулгыг шинжилж дараах JSON-г буцаана.
 
-1. САНХҮҮГИЙН ЭРҮҮЛ МЭНДИЙН ОНОО (0-100):
-   Тооцоолох томьёо:
-   - Хадгаламжийн хувь (40 оноо): savingsRate = (netCashflow / totalIncome) × 100
-     * >40%: 40 оноо, 30-40%: 32 оноо, 20-30%: 24 оноо, 10-20%: 16 оноо, 0-10%: 8 оноо, <0%: 0 оноо
-   - Орлогын тогтвортой байдал (20 оноо): coefficient of variation < 20% = 20 оноо
-   - Зардлын харьцаа (20 оноо): expenseRatio < 60% = 20 оноо, 60-80% = 12 оноо, >80% = 4 оноо
-   - Мөнгөн урсгалын чиг хандлага (20 оноо): consistent positive = 20 оноо
+ОНОО ТООЦООЛОХ:
+- Хадгаламж (40 оноо): savingsRate = netCashflow/totalIncome×100. >40%=40, 30-40%=32, 20-30%=24, 10-20%=16, 0-10%=8, <0%=0
+- Орлого тогтвортой (20 оноо): CV<20%=20
+- Зардал харьцаа (20 оноо): <60%=20, 60-80%=12, >80%=4
+- Урсгал чиг (20 оноо): тогтмол эерэг=20
+Ангилал: 70-100="Сайн"/green, 40-69="Анхаарах"/yellow, 0-39="Эрсдэлтэй"/red
 
-   Ангилал:
-   - 70-100: "Сайн" (green)
-   - 40-69: "Анхаарах" (yellow)
-   - 0-39: "Эрсдэлтэй" (red)
+${BASE_RULES}
 
-2. ОРЛОГЫН ШИНЖИЛГЭЭ:
-   - Нийт орлого, сарын дундаж
-   - Тогтвортой байдал: CV < 20% = "Тогтвортой", CV >= 20% = "Тогтворгүй"
-   - Гол эх үүсвэрүүд: Цалин, Бизнес, Хөрөнгө оруулалт, Бусад
-   - Insights: 2-3 ойлголт монголоор
-
-3. ЗАРДЛЫН ШИНЖИЛГЭЭ:
-   - Нийт зардал, сарын дундаж
-   - Зардал/Орлого харьцаа
-   - Топ ангилалууд: Орон сууц, Хоол, Тээвэр, Худалдаа, Үйлчилгээ, Бусад
-   - Тогтмол vs Хувьсах зардал
-   - Warnings: Хэт зарцуулалт, огцом өсөлт илрүүлэх
-
-4. МӨНГӨН УРСГАЛЫН ШИНЖИЛГЭЭ:
-   - Цэвэр мөнгөн урсгал, сарын дундаж
-   - Чиг хандлага: "Эерэг" (өсч байгаа), "Сөрөг" (буурч байгаа), "Тогтвортой"
-   - Алдагдалтай сарууд илрүүлэх
-   - Хадгаламжийн хувь тооцоолох
-
-5. ЗУРШЛЫН ХЭЛБЭР ИЛРҮҮЛЭХ:
-   Дараах зуршлуудыг илрүүлэх:
-   - salary_driven: Цалин орсны дараа их зарцуулдаг
-   - end_of_month_shortage: Сарын эцэст мөнгө дутдаг
-   - frequent_small_expenses: Олон жижиг зарцуулалт
-   - impulse_spending: Санамсаргүй худалдан авалт
-   - consistent_saving: Тогтмол хадгалдаг
-   - seasonal_variation: Улирлын хэлбэлзэл
-
-   Зарцуулалтын профайл: "Хэмнэлттэй", "Тэнцвэртэй", "Өгөөмөр"
-
-6. ЭРСДЭЛИЙН ДОХИО ИЛРҮҮЛЭХ:
-   - expense_exceeds_income: Зардал орлогоос давсан
-   - no_savings: Хадгаламж байхгүй
-   - single_income_dependency: Нэг эх үүсвэрээс хамааралтай
-   - increasing_debt: Өрийн төлбөр өсч байна
-   - high_expense_ratio: Өндөр зардлын харьцаа (>80%)
-   - irregular_income: Орлого тогтворгүй
-
-7. ЗӨВЛӨМЖҮҮД (3-7 зөвлөмж):
-   Ангилал бүрт:
-   - priority: Нэн тэргүүнд хийх
-   - savings: Хадгаламжтай холбоотой
-   - investment: Хөрөнгө оруулалттай холбоотой
-   - lifestyle: Амьдралын хэв маягтай холбоотой
-
-8. САНХҮҮГИЙН ШАТУУД (12% жилийн өгөөж):
-   - security: monthly_expenses × 6 (6 сарын зардал)
-   - comfort: (monthly_expenses × 12) / 0.12 × 0.5 (50% пассив орлого)
-   - freedom: (monthly_expenses × 12) / 0.12 (100% пассив орлого)
-   - super_freedom: 1,000,000,000 MNT
-
-9. ТУСГАЛ ТООЦОО:
-   monthly_savings = netCashflow / months
-   - 5 жил: FV = monthly_savings × 12 × ((1.12^5 - 1) / 0.12)
-   - 15 жил: FV = monthly_savings × 12 × ((1.12^15 - 1) / 0.12)
-   - 30 жил: FV = monthly_savings × 12 × ((1.12^30 - 1) / 0.12)
-
-10. МЯНГАТ МАЛЧИН СТРАТЕГИ:
-    - Эрсдэлийн хүлээн зөвшөөрөх түвшин тодорхойлох
-    - Хөрөнгө хуваарилалтын санал
-
-================================================================================
-JSON БҮТЭЦ (ЗӨВХӨН ЭНЭ ФОРМАТААР ХАРИУЛНА)
-================================================================================
+JSON:
 {
-  "overview": {
-    "periodStart": "YYYY-MM-DD",
-    "periodEnd": "YYYY-MM-DD",
-    "totalMonths": number,
-    "bankName": "string эсвэл null",
-    "currency": "MNT",
-    "generatedAt": "YYYY-MM-DD"
-  },
-  "score": {
-    "score": number (0-100),
-    "category": "Сайн" | "Анхаарах" | "Эрсдэлтэй",
-    "categoryColor": "green" | "yellow" | "red",
-    "description": "Тайлбар монголоор",
-    "factors": [
-      {"name": "Хүчин зүйлийн нэр", "impact": "positive|negative|neutral", "description": "Тайлбар"}
-    ]
-  },
-  "income": {
-    "totalIncome": number,
-    "monthlyAverage": number,
-    "stability": "Тогтвортой" | "Тогтворгүй",
-    "stabilityScore": number (0-100),
-    "mainSources": [
-      {"name": "Эх үүсвэрийн нэр", "amount": number, "percentage": number, "frequency": "Тогтмол" | "Тогтмол бус"}
-    ],
-    "insights": ["Ойлголт 1", "Ойлголт 2"]
-  },
-  "expense": {
-    "totalExpense": number,
-    "monthlyAverage": number,
-    "expenseToIncomeRatio": number,
-    "topCategories": [
-      {"name": "Ангилалын нэр", "amount": number, "percentage": number, "trend": "Өсөж байна" | "Буурч байна" | "Тогтвортой"}
-    ],
-    "fixedExpenses": number,
-    "variableExpenses": number,
-    "insights": ["Ойлголт 1"],
-    "warnings": ["Анхааруулга 1"] // хоосон байж болно
-  },
-  "cashflow": {
-    "netCashflow": number,
-    "monthlyAverage": number,
-    "trend": "Эерэг" | "Сөрөг" | "Тогтвортой",
-    "monthlyBreakdown": [
-      {"month": "YYYY-MM", "income": number, "expense": number, "netCashflow": number}
-    ],
-    "deficitMonths": ["YYYY-MM"], // хоосон байж болно
-    "surplusMonths": ["YYYY-MM"],
-    "savingsRate": number,
-    "insights": ["Ойлголт 1"]
-  },
-  "behaviorPatterns": {
-    "patterns": [
-      {"type": "salary_driven|end_of_month_shortage|frequent_small_expenses|impulse_spending|consistent_saving|seasonal_variation", "detected": boolean, "severity": "low|medium|high" эсвэл null, "description": "Тайлбар"}
-    ],
-    "spendingProfile": "Хэмнэлттэй" | "Тэнцвэртэй" | "Өгөөмөр",
-    "insights": ["Ойлголт 1"]
-  },
-  "risks": {
-    "overallRiskLevel": "Бага" | "Дунд" | "Өндөр",
-    "risks": [
-      {"type": "expense_exceeds_income|no_savings|single_income_dependency|increasing_debt|high_expense_ratio|irregular_income", "detected": boolean, "severity": "Бага" | "Дунд" | "Өндөр", "title": "Гарчиг", "description": "Тайлбар", "recommendation": "Зөвлөмж"}
-    ],
-    "hasUrgentRisks": boolean
-  },
-  "recommendations": {
-    "priority": [
-      {"id": "p1", "title": "Гарчиг", "description": "Тайлбар", "impact": "Өндөр" | "Дунд" | "Бага", "difficulty": "Хялбар" | "Дунд" | "Хэцүү", "timeframe": "Богино хугацаа" | "Дунд хугацаа" | "Урт хугацаа", "actionItems": ["Алхам 1", "Алхам 2"]}
-    ],
-    "savings": [],
-    "investment": [],
-    "lifestyle": []
-  },
-  "milestones": {
-    "security": {"amount_mnt": number, "years_to_reach": number},
-    "comfort": {"amount_mnt": number, "years_to_reach": number},
-    "freedom": {"amount_mnt": number, "years_to_reach": number},
-    "super_freedom": {"amount_mnt": 1000000000, "years_to_reach": number}
-  },
-  "projections": [
-    {"year": 5, "projected_value": number, "assumptions": "12% жилийн өгөөж"},
-    {"year": 15, "projected_value": number, "assumptions": "12% жилийн өгөөж"},
-    {"year": 30, "projected_value": number, "assumptions": "12% жилийн өгөөж"}
-  ],
-  "strategy": {
-    "philosophy": "Мянгат малчин стратеги - хөрөнгөө төрөлжүүлэх",
-    "advice_items": ["Зөвлөмж 1", "Зөвлөмж 2", "Зөвлөмж 3"],
-    "riskTolerance": "Бага" | "Дунд" | "Өндөр",
-    "suggestedAllocation": [
-      {"category": "Хөрөнгийн ангилал", "percentage": number, "description": "Тайлбар"}
-    ]
-  },
-  "verdict": {
-    "overallStatus": "Нэг өгүүлбэрээр нийт дүгнэлт",
-    "mainStrength": "Гол давуу тал",
-    "mainRisk": "Гол эрсдэл",
-    "mainOpportunity": "Гол боломж",
-    "nextSteps": ["Дараагийн алхам 1", "Дараагийн алхам 2", "Дараагийн алхам 3"]
-  }
+  "overview": {"periodStart": "YYYY-MM-DD", "periodEnd": "YYYY-MM-DD", "totalMonths": number, "bankName": string|null, "currency": "MNT", "generatedAt": "YYYY-MM-DD"},
+  "score": {"score": 0-100, "category": "Сайн"|"Анхаарах"|"Эрсдэлтэй", "categoryColor": "green"|"yellow"|"red", "description": "string", "factors": [{"name": "string", "impact": "positive"|"negative"|"neutral", "description": "string"}]},
+  "income": {"totalIncome": number, "monthlyAverage": number, "stability": "Тогтвортой"|"Тогтворгүй", "stabilityScore": 0-100, "mainSources": [{"name": "string", "amount": number, "percentage": number, "frequency": "Тогтмол"|"Тогтмол бус"}], "insights": ["string"]},
+  "expense": {"totalExpense": number, "monthlyAverage": number, "expenseToIncomeRatio": number, "topCategories": [{"name": "string", "amount": number, "percentage": number, "trend": "Өсөж байна"|"Буурч байна"|"Тогтвортой"}], "fixedExpenses": number, "variableExpenses": number, "insights": ["string"], "warnings": []},
+  "cashflow": {"netCashflow": number, "monthlyAverage": number, "trend": "Эерэг"|"Сөрөг"|"Тогтвортой", "monthlyBreakdown": [{"month": "YYYY-MM", "income": number, "expense": number, "netCashflow": number}], "deficitMonths": [], "surplusMonths": [], "savingsRate": number, "insights": ["string"]}
 }
-
-================================================================================
-ЧУХАЛ ДҮРМҮҮД
-================================================================================
-- Бүх тоон утга бүхэл тоо (years_to_reach, savingsRate, expenseToIncomeRatio-с бусад)
-- years_to_reach нэг оронтой бутархай (жишээ: 1.5, 2.3)
-- Бүх текст ЗААВАЛ МОНГОЛ хэлээр
-- ЗӨВХӨН JSON хариулна, өөр юм бичихгүй
-- Мэдээлэл дутуу бол консерватив тооцоо хийх
-- Санхүүгийн зөвлөгөө өгөхдөө ТААМАГЛАХГҮЙ, зөвхөн өгөгдөл дээр үндэслэнэ
-- Хэрэв ямар нэгэн зүйл тодорхойгүй бол null утга ашиглах
 
 БАНКНЫ ХУУЛГА:
 `;
 
-export function buildAnalysisPrompt(extractedText: string): string {
+// Part 2: Behavior, risks, recommendations
+export const PROMPT_PART2 = `Та санхүүгийн шинжээч. Өмнөх шинжилгээний үр дүн болон банкны хуулга дээр үндэслэн дараах JSON-г буцаана.
+
+Зуршлын төрөл: salary_driven, end_of_month_shortage, frequent_small_expenses, impulse_spending, consistent_saving, seasonal_variation
+Эрсдэл төрөл: expense_exceeds_income, no_savings, single_income_dependency, increasing_debt, high_expense_ratio, irregular_income
+
+${BASE_RULES}
+
+JSON:
+{
+  "behaviorPatterns": {"patterns": [{"type": "string", "detected": boolean, "severity": "low"|"medium"|"high"|null, "description": "string"}], "spendingProfile": "Хэмнэлттэй"|"Тэнцвэртэй"|"Өгөөмөр", "insights": ["string"]},
+  "risks": {"overallRiskLevel": "Бага"|"Дунд"|"Өндөр", "risks": [{"type": "string", "detected": boolean, "severity": "Бага"|"Дунд"|"Өндөр", "title": "string", "description": "string", "recommendation": "string"}], "hasUrgentRisks": boolean},
+  "recommendations": {"priority": [{"id": "p1", "title": "string", "description": "string", "impact": "Өндөр"|"Дунд"|"Бага", "difficulty": "Хялбар"|"Дунд"|"Хэцүү", "timeframe": "Богино хугацаа"|"Дунд хугацаа"|"Урт хугацаа", "actionItems": ["string"]}], "savings": [], "investment": [], "lifestyle": []}
+}
+
+ӨМНӨХ ШИНЖИЛГЭЭ:
+`;
+
+// Part 3: Milestones, projections, strategy, verdict
+export const PROMPT_PART3 = `Та санхүүгийн шинжээч. Өмнөх шинжилгээний үр дүн дээр үндэслэн дараах JSON-г буцаана.
+
+ТООЦОО (12% жилийн өгөөж):
+- security: monthly_expenses × 6
+- comfort: (monthly_expenses × 12) / 0.12 × 0.5
+- freedom: (monthly_expenses × 12) / 0.12
+- super_freedom: 1,000,000,000
+- years_to_reach: Хэрэв monthly_savings<=0 бол 99, эсвэл target/(monthly_savings×12)
+
+Тусгал: monthly_savings×12×((1.12^N-1)/0.12) for N=5,15,30
+
+${BASE_RULES}
+
+JSON:
+{
+  "milestones": {"security": {"amount_mnt": number, "years_to_reach": number}, "comfort": {"amount_mnt": number, "years_to_reach": number}, "freedom": {"amount_mnt": number, "years_to_reach": number}, "super_freedom": {"amount_mnt": 1000000000, "years_to_reach": number}},
+  "projections": [{"year": 5, "projected_value": number, "assumptions": "12% жилийн өгөөж"}, {"year": 15, "projected_value": number, "assumptions": "12% жилийн өгөөж"}, {"year": 30, "projected_value": number, "assumptions": "12% жилийн өгөөж"}],
+  "strategy": {"philosophy": "Мянгат малчин стратеги", "advice_items": ["string"], "riskTolerance": "Бага"|"Дунд"|"Өндөр", "suggestedAllocation": [{"category": "string", "percentage": number, "description": "string"}]},
+  "verdict": {"overallStatus": "string", "mainStrength": "string", "mainRisk": "string", "mainOpportunity": "string", "nextSteps": ["string"]}
+}
+
+ӨМНӨХ ШИНЖИЛГЭЭ:
+`;
+
+export function buildPart1Prompt(extractedText: string): string {
+  return PROMPT_PART1 + extractedText;
+}
+
+export function buildPart2Prompt(
+  extractedText: string,
+  part1Result: string,
+): string {
+  return PROMPT_PART2 + part1Result + "\n\nБАНКНЫ ХУУЛГА:\n" + extractedText;
+}
+
+export function buildPart3Prompt(
+  part1Result: string,
+  part2Result: string,
+): string {
   return (
-    FINANCIAL_GUIDE_PROMPT +
-    extractedText +
-    "\n\n---\nДээрх банкны хуулгыг шинжилж, JSON форматаар хариулна уу."
+    PROMPT_PART3 + JSON.stringify({ part1: part1Result, part2: part2Result })
   );
+}
+
+// Legacy single prompt (kept for reference)
+export const FINANCIAL_GUIDE_PROMPT = PROMPT_PART1;
+
+export function buildAnalysisPrompt(extractedText: string): string {
+  return buildPart1Prompt(extractedText);
 }
 
 // Legacy prompt for backward compatibility

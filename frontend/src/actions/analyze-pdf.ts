@@ -3,7 +3,7 @@
 import { uploadSchema } from "@/schemas/upload";
 import { extractTextFromPdf } from "@/lib/pdf-parser";
 import { analyzeStatement } from "@/lib/gemini";
-import type { ActionState } from "@/types";
+import type { ActionState, FinancialGuideReport } from "@/types";
 
 export async function analyzePdf(formData: FormData): Promise<ActionState> {
   try {
@@ -76,6 +76,38 @@ export async function analyzePdf(formData: FormData): Promise<ActionState> {
     return {
       success: false,
       error: "Алдаа гарлаа. Дахин оролдоно уу.",
+    };
+  }
+}
+
+export async function analyzeText(
+  text: string,
+): Promise<
+  | { success: true; data: FinancialGuideReport }
+  | { success: false; error: string }
+> {
+  try {
+    if (!text || text.length < 50) {
+      return {
+        success: false,
+        error: "Хангалттай текст олдсонгүй",
+      };
+    }
+
+    const result = await analyzeStatement(text);
+
+    return {
+      success: true,
+      data: result,
+    };
+  } catch (error) {
+    console.error("Error in analyzeText:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "AI боловсруулалтын алдаа гарлаа",
     };
   }
 }
