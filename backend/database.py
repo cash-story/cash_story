@@ -49,12 +49,69 @@ async def init_db():
             )
         """)
 
+        # Report groups table (for combined reports)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS report_groups (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                combined_result JSONB,
+                status TEXT DEFAULT 'draft',
+                parent_report_id UUID REFERENCES report_groups(id),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # Statements table (individual uploaded files)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS statements (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                report_group_id UUID REFERENCES report_groups(id) ON DELETE CASCADE,
+                file_name TEXT NOT NULL,
+                file_format TEXT NOT NULL,
+                file_size INTEGER,
+                bank_name TEXT,
+                encrypted_text TEXT,
+                encryption_iv TEXT,
+                parsed_transactions JSONB,
+                status TEXT DEFAULT 'pending',
+                error_message TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # User encryption keys table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_keys (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                salt TEXT NOT NULL,
+                verification_hash TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
         # Indexes for better query performance
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)
         """)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_report_groups_user_id ON report_groups(user_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_report_groups_status ON report_groups(status)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_statements_user_id ON statements(user_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_statements_report_group_id ON statements(report_group_id)
         """)
 
 

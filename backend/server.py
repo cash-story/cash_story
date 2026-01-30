@@ -11,17 +11,27 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
-import pdfplumber
 from auth import require_auth, verify_google_token
 from database import close_db, get_db, init_db
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from models import (
     AnalysisCreate,
     AnalysisListItem,
     AnalysisResponse,
+    ExtractionResult,
+    KeyInfoResponse,
+    KeySetupRequest,
+    KeySetupResponse,
+    ReportGroupCreate,
+    ReportGroupListItem,
+    ReportGroupResponse,
+    ReportGroupUpdate,
+    StatementListItem,
+    StatementResponse,
     UserResponse,
 )
+from parsers import ParserFactory
 from pydantic import BaseModel
 
 
@@ -63,14 +73,7 @@ app.add_middleware(
 )
 
 
-# --- PDF Extraction ---
-
-
-class ExtractionResult(BaseModel):
-    success: bool
-    text: Optional[str] = None
-    error: Optional[str] = None
-    pages: int = 0
+# --- File Extraction (Multi-format) ---
 
 
 @app.get("/health")
@@ -82,66 +85,39 @@ async def health_check():
 @app.post("/extract", response_model=ExtractionResult)
 async def extract_text(file: UploadFile = File(...), max_chars: int = 50000):
     """
-    Extract text from uploaded PDF file.
+    Extract text from uploaded file (PDF, Excel, or CSV).
 
-    - **file**: PDF file to extract text from
+    - **file**: File to extract text from (PDF, xlsx, xls, or csv)
     - **max_chars**: Maximum characters to extract (default 50000)
     """
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="PDF файл биш байна")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Файлын нэр байхгүй байна")
+
+    # Validate file format
+    file_format = ParserFactory.detect_format(file.filename)
+    if not file_format:
+        supported = ", ".join(ParserFactory.get_supported_extensions())
+        raise HTTPException(
+            status_code=400,
+            detail=f"Дэмжигдээгүй файлын формат. Дэмжигдэх форматууд: {supported}",
+        )
 
     try:
         content = await file.read()
-        pdf_stream = io.BytesIO(content)
+        result = await ParserFactory.parse_file(content, file.filename, max_chars)
 
-        text_parts = []
-        total_chars = 0
-        num_pages = 0
-
-        with pdfplumber.open(pdf_stream) as pdf:
-            num_pages = len(pdf.pages)
-
-            for page in pdf.pages:
-                if total_chars >= max_chars:
-                    text_parts.append("\n\n[Текст хэт урт тул товчилсон...]")
-                    break
-
-                tables = page.extract_tables()
-                if tables:
-                    for table in tables:
-                        for row in table:
-                            if row:
-                                row_text = "\t".join(
-                                    cell.strip() if cell else "" for cell in row
-                                )
-                                if row_text.strip():
-                                    text_parts.append(row_text)
-                                    total_chars += len(row_text)
-                                    if total_chars >= max_chars:
-                                        break
-                        if total_chars >= max_chars:
-                            break
-                else:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text_parts.append(page_text)
-                        total_chars += len(page_text)
-
-        full_text = "\n".join(text_parts).strip()
-
-        if not full_text:
-            return ExtractionResult(
-                success=False,
-                error="PDF файлаас текст олдсонгүй. Зураг PDF байж магадгүй.",
-            )
+        if not result.success:
+            return ExtractionResult(success=False, error=result.error)
 
         return ExtractionResult(
-            success=True, text=full_text[:max_chars], pages=num_pages
+            success=True,
+            text=result.raw_text,
+            metadata=result.metadata,
         )
 
     except Exception as e:
         return ExtractionResult(
-            success=False, error=f"PDF уншихад алдаа гарлаа: {str(e)}"
+            success=False, error=f"Файл уншихад алдаа гарлаа: {str(e)}"
         )
 
 
@@ -324,6 +300,709 @@ async def delete_analysis(analysis_id: str, user: dict = Depends(require_auth)):
         raise HTTPException(status_code=404, detail="Шинжилгээ олдсонгүй")
 
     return {"deleted": True}
+
+
+# --- Report Groups CRUD ---
+
+
+@app.post("/report-groups", response_model=ReportGroupResponse, status_code=201)
+async def create_report_group(
+    data: ReportGroupCreate, user: dict = Depends(require_auth)
+):
+    """Create a new report group for combined statements."""
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO report_groups (user_id, name, description, status)
+            VALUES ($1, $2, $3, 'draft')
+            RETURNING id, user_id, name, description, status, combined_result,
+                      parent_report_id, created_at, updated_at
+            """,
+            user["id"],
+            data.name,
+            data.description,
+        )
+
+    return ReportGroupResponse(
+        id=str(row["id"]),
+        name=row["name"],
+        description=row["description"],
+        status=row["status"],
+        combined_result=json.loads(row["combined_result"])
+        if row["combined_result"]
+        else None,
+        statements=[],
+        parent_report_id=str(row["parent_report_id"])
+        if row["parent_report_id"]
+        else None,
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
+    )
+
+
+@app.get("/report-groups", response_model=list[ReportGroupListItem])
+async def list_report_groups(
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    user: dict = Depends(require_auth),
+):
+    """List user's report groups with optional status filter."""
+    async with get_db() as conn:
+        if status:
+            rows = await conn.fetch(
+                """
+                SELECT rg.id, rg.name, rg.description, rg.status, rg.parent_report_id,
+                       rg.created_at, rg.updated_at,
+                       COUNT(s.id) as statement_count
+                FROM report_groups rg
+                LEFT JOIN statements s ON s.report_group_id = rg.id
+                WHERE rg.user_id = $1 AND rg.status = $2
+                GROUP BY rg.id
+                ORDER BY rg.updated_at DESC
+                LIMIT $3 OFFSET $4
+                """,
+                user["id"],
+                status,
+                limit,
+                offset,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT rg.id, rg.name, rg.description, rg.status, rg.parent_report_id,
+                       rg.created_at, rg.updated_at,
+                       COUNT(s.id) as statement_count
+                FROM report_groups rg
+                LEFT JOIN statements s ON s.report_group_id = rg.id
+                WHERE rg.user_id = $1
+                GROUP BY rg.id
+                ORDER BY rg.updated_at DESC
+                LIMIT $2 OFFSET $3
+                """,
+                user["id"],
+                limit,
+                offset,
+            )
+
+    return [
+        ReportGroupListItem(
+            id=str(row["id"]),
+            name=row["name"],
+            description=row["description"],
+            status=row["status"],
+            statement_count=row["statement_count"],
+            parent_report_id=str(row["parent_report_id"])
+            if row["parent_report_id"]
+            else None,
+            created_at=row["created_at"].isoformat(),
+            updated_at=row["updated_at"].isoformat(),
+        )
+        for row in rows
+    ]
+
+
+@app.get("/report-groups/{group_id}", response_model=ReportGroupResponse)
+async def get_report_group(group_id: str, user: dict = Depends(require_auth)):
+    """Get a report group with all its statements."""
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, user_id, name, description, status, combined_result,
+                   parent_report_id, created_at, updated_at
+            FROM report_groups
+            WHERE id = $1 AND user_id = $2
+            """,
+            group_id,
+            user["id"],
+        )
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+        # Get statements
+        statement_rows = await conn.fetch(
+            """
+            SELECT id, file_name, file_format, file_size, bank_name, status,
+                   error_message, created_at
+            FROM statements
+            WHERE report_group_id = $1
+            ORDER BY created_at ASC
+            """,
+            group_id,
+        )
+
+    statements = [
+        StatementListItem(
+            id=str(s["id"]),
+            file_name=s["file_name"],
+            file_format=s["file_format"],
+            file_size=s["file_size"],
+            bank_name=s["bank_name"],
+            status=s["status"],
+            error_message=s["error_message"],
+            created_at=s["created_at"].isoformat(),
+        )
+        for s in statement_rows
+    ]
+
+    return ReportGroupResponse(
+        id=str(row["id"]),
+        name=row["name"],
+        description=row["description"],
+        status=row["status"],
+        combined_result=json.loads(row["combined_result"])
+        if row["combined_result"]
+        else None,
+        statements=statements,
+        parent_report_id=str(row["parent_report_id"])
+        if row["parent_report_id"]
+        else None,
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
+    )
+
+
+@app.put("/report-groups/{group_id}", response_model=ReportGroupResponse)
+async def update_report_group(
+    group_id: str, data: ReportGroupUpdate, user: dict = Depends(require_auth)
+):
+    """Update a report group's metadata."""
+    async with get_db() as conn:
+        # Build dynamic update query
+        updates = []
+        values = []
+        param_idx = 1
+
+        if data.name is not None:
+            updates.append(f"name = ${param_idx}")
+            values.append(data.name)
+            param_idx += 1
+
+        if data.description is not None:
+            updates.append(f"description = ${param_idx}")
+            values.append(data.description)
+            param_idx += 1
+
+        if data.status is not None:
+            if data.status not in ["draft", "analyzed", "archived"]:
+                raise HTTPException(status_code=400, detail="Буруу статус")
+            updates.append(f"status = ${param_idx}")
+            values.append(data.status)
+            param_idx += 1
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="Шинэчлэх өгөгдөл байхгүй")
+
+        updates.append("updated_at = NOW()")
+        values.extend([group_id, user["id"]])
+
+        query = f"""
+            UPDATE report_groups
+            SET {", ".join(updates)}
+            WHERE id = ${param_idx} AND user_id = ${param_idx + 1}
+            RETURNING id, name, description, status, combined_result,
+                      parent_report_id, created_at, updated_at
+        """
+
+        row = await conn.fetchrow(query, *values)
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+        # Get statements
+        statement_rows = await conn.fetch(
+            """
+            SELECT id, file_name, file_format, file_size, bank_name, status,
+                   error_message, created_at
+            FROM statements
+            WHERE report_group_id = $1
+            ORDER BY created_at ASC
+            """,
+            group_id,
+        )
+
+    statements = [
+        StatementListItem(
+            id=str(s["id"]),
+            file_name=s["file_name"],
+            file_format=s["file_format"],
+            file_size=s["file_size"],
+            bank_name=s["bank_name"],
+            status=s["status"],
+            error_message=s["error_message"],
+            created_at=s["created_at"].isoformat(),
+        )
+        for s in statement_rows
+    ]
+
+    return ReportGroupResponse(
+        id=str(row["id"]),
+        name=row["name"],
+        description=row["description"],
+        status=row["status"],
+        combined_result=json.loads(row["combined_result"])
+        if row["combined_result"]
+        else None,
+        statements=statements,
+        parent_report_id=str(row["parent_report_id"])
+        if row["parent_report_id"]
+        else None,
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
+    )
+
+
+@app.delete("/report-groups/{group_id}")
+async def delete_report_group(group_id: str, user: dict = Depends(require_auth)):
+    """Delete a report group and all its statements."""
+    async with get_db() as conn:
+        result = await conn.execute(
+            "DELETE FROM report_groups WHERE id = $1 AND user_id = $2",
+            group_id,
+            user["id"],
+        )
+
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+    return {"deleted": True}
+
+
+# --- Statements Management ---
+
+
+@app.post(
+    "/report-groups/{group_id}/statements",
+    response_model=StatementResponse,
+    status_code=201,
+)
+async def upload_statement(
+    group_id: str,
+    file: UploadFile = File(...),
+    encrypted_text: Optional[str] = Form(None),
+    encryption_iv: Optional[str] = Form(None),
+    user: dict = Depends(require_auth),
+):
+    """Upload and parse a statement file for a report group."""
+    # Verify report group exists and belongs to user
+    async with get_db() as conn:
+        rg = await conn.fetchrow(
+            "SELECT id FROM report_groups WHERE id = $1 AND user_id = $2",
+            group_id,
+            user["id"],
+        )
+        if not rg:
+            raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Файлын нэр байхгүй байна")
+
+    # Validate file format
+    file_format = ParserFactory.detect_format(file.filename)
+    if not file_format:
+        supported = ", ".join(ParserFactory.get_supported_extensions())
+        raise HTTPException(
+            status_code=400,
+            detail=f"Дэмжигдээгүй файлын формат. Дэмжигдэх форматууд: {supported}",
+        )
+
+    content = await file.read()
+    file_size = len(content)
+
+    # Parse the file
+    result = await ParserFactory.parse_file(content, file.filename)
+
+    if result.success:
+        status = "extracted"
+        error_message = None
+        extracted_text = encrypted_text if encrypted_text else result.raw_text
+        bank_name = result.metadata.get("bank_name")
+    else:
+        status = "error"
+        error_message = result.error
+        extracted_text = None
+        bank_name = None
+
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO statements (
+                user_id, report_group_id, file_name, file_format, file_size,
+                bank_name, encrypted_text, encryption_iv, status, error_message
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id, file_name, file_format, file_size, bank_name,
+                      encrypted_text, encryption_iv, status, error_message, created_at
+            """,
+            user["id"],
+            group_id,
+            file.filename,
+            file_format.value,
+            file_size,
+            bank_name,
+            extracted_text,
+            encryption_iv,
+            status,
+            error_message,
+        )
+
+        # Update report group's updated_at
+        await conn.execute(
+            "UPDATE report_groups SET updated_at = NOW() WHERE id = $1",
+            group_id,
+        )
+
+    return StatementResponse(
+        id=str(row["id"]),
+        file_name=row["file_name"],
+        file_format=row["file_format"],
+        file_size=row["file_size"],
+        bank_name=row["bank_name"],
+        encrypted_text=row["encrypted_text"],
+        encryption_iv=row["encryption_iv"],
+        status=row["status"],
+        error_message=row["error_message"],
+        created_at=row["created_at"].isoformat(),
+    )
+
+
+@app.get("/report-groups/{group_id}/statements", response_model=list[StatementListItem])
+async def list_statements(group_id: str, user: dict = Depends(require_auth)):
+    """List all statements in a report group."""
+    async with get_db() as conn:
+        # Verify report group exists and belongs to user
+        rg = await conn.fetchrow(
+            "SELECT id FROM report_groups WHERE id = $1 AND user_id = $2",
+            group_id,
+            user["id"],
+        )
+        if not rg:
+            raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+        rows = await conn.fetch(
+            """
+            SELECT id, file_name, file_format, file_size, bank_name, status,
+                   error_message, created_at
+            FROM statements
+            WHERE report_group_id = $1
+            ORDER BY created_at ASC
+            """,
+            group_id,
+        )
+
+    return [
+        StatementListItem(
+            id=str(row["id"]),
+            file_name=row["file_name"],
+            file_format=row["file_format"],
+            file_size=row["file_size"],
+            bank_name=row["bank_name"],
+            status=row["status"],
+            error_message=row["error_message"],
+            created_at=row["created_at"].isoformat(),
+        )
+        for row in rows
+    ]
+
+
+@app.get(
+    "/report-groups/{group_id}/statements/{statement_id}",
+    response_model=StatementResponse,
+)
+async def get_statement(
+    group_id: str, statement_id: str, user: dict = Depends(require_auth)
+):
+    """Get a single statement with its encrypted text."""
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT s.id, s.file_name, s.file_format, s.file_size, s.bank_name,
+                   s.encrypted_text, s.encryption_iv, s.status, s.error_message,
+                   s.created_at
+            FROM statements s
+            JOIN report_groups rg ON rg.id = s.report_group_id
+            WHERE s.id = $1 AND s.report_group_id = $2 AND rg.user_id = $3
+            """,
+            statement_id,
+            group_id,
+            user["id"],
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Хуулга олдсонгүй")
+
+    return StatementResponse(
+        id=str(row["id"]),
+        file_name=row["file_name"],
+        file_format=row["file_format"],
+        file_size=row["file_size"],
+        bank_name=row["bank_name"],
+        encrypted_text=row["encrypted_text"],
+        encryption_iv=row["encryption_iv"],
+        status=row["status"],
+        error_message=row["error_message"],
+        created_at=row["created_at"].isoformat(),
+    )
+
+
+@app.delete("/report-groups/{group_id}/statements/{statement_id}")
+async def delete_statement(
+    group_id: str, statement_id: str, user: dict = Depends(require_auth)
+):
+    """Remove a statement from a report group."""
+    async with get_db() as conn:
+        # Verify ownership through report group
+        result = await conn.execute(
+            """
+            DELETE FROM statements s
+            USING report_groups rg
+            WHERE s.id = $1 AND s.report_group_id = $2
+              AND rg.id = s.report_group_id AND rg.user_id = $3
+            """,
+            statement_id,
+            group_id,
+            user["id"],
+        )
+
+        if result == "DELETE 0":
+            raise HTTPException(status_code=404, detail="Хуулга олдсонгүй")
+
+        # Update report group's updated_at
+        await conn.execute(
+            "UPDATE report_groups SET updated_at = NOW() WHERE id = $1",
+            group_id,
+        )
+
+    return {"deleted": True}
+
+
+# --- Combined Analysis ---
+
+
+@app.post("/report-groups/{group_id}/analyze")
+async def analyze_report_group(group_id: str, user: dict = Depends(require_auth)):
+    """
+    Get combined text from all statements in a report group for AI analysis.
+    The actual AI analysis happens on the frontend.
+    """
+    async with get_db() as conn:
+        # Verify report group exists and belongs to user
+        rg = await conn.fetchrow(
+            "SELECT id, name FROM report_groups WHERE id = $1 AND user_id = $2",
+            group_id,
+            user["id"],
+        )
+        if not rg:
+            raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+        # Get all successfully extracted statements
+        rows = await conn.fetch(
+            """
+            SELECT id, file_name, bank_name, encrypted_text
+            FROM statements
+            WHERE report_group_id = $1 AND status = 'extracted'
+            ORDER BY created_at ASC
+            """,
+            group_id,
+        )
+
+    if not rows:
+        raise HTTPException(
+            status_code=400,
+            detail="Шинжлэх хуулга олдсонгүй. Хуулга оруулна уу.",
+        )
+
+    # Combine all statement texts
+    combined_parts = []
+    for row in rows:
+        combined_parts.append(
+            f"\n--- {row['file_name']} ({row['bank_name'] or 'Unknown'}) ---\n"
+        )
+        combined_parts.append(row["encrypted_text"] or "")
+
+    combined_text = "\n".join(combined_parts)
+
+    return {
+        "success": True,
+        "combined_text": combined_text,
+        "statement_count": len(rows),
+        "report_name": rg["name"],
+    }
+
+
+@app.post("/report-groups/{group_id}/save-result")
+async def save_report_result(
+    group_id: str,
+    result: dict,
+    user: dict = Depends(require_auth),
+):
+    """Save the AI analysis result to the report group."""
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE report_groups
+            SET combined_result = $1, status = 'analyzed', updated_at = NOW()
+            WHERE id = $2 AND user_id = $3
+            RETURNING id
+            """,
+            json.dumps(result, ensure_ascii=False),
+            group_id,
+            user["id"],
+        )
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+    return {"success": True, "id": str(row["id"])}
+
+
+# --- Extend Report ---
+
+
+@app.post("/report-groups/{group_id}/extend", response_model=ReportGroupResponse)
+async def extend_report(group_id: str, user: dict = Depends(require_auth)):
+    """Create a new report group extending an existing one."""
+    async with get_db() as conn:
+        # Get original report group
+        original = await conn.fetchrow(
+            """
+            SELECT id, name, description
+            FROM report_groups
+            WHERE id = $1 AND user_id = $2
+            """,
+            group_id,
+            user["id"],
+        )
+
+        if not original:
+            raise HTTPException(status_code=404, detail="Тайлангийн бүлэг олдсонгүй")
+
+        # Create new report group with parent reference
+        new_name = f"{original['name']} (Өргөтгөсөн)"
+        new_row = await conn.fetchrow(
+            """
+            INSERT INTO report_groups (user_id, name, description, status, parent_report_id)
+            VALUES ($1, $2, $3, 'draft', $4)
+            RETURNING id, name, description, status, combined_result,
+                      parent_report_id, created_at, updated_at
+            """,
+            user["id"],
+            new_name,
+            original["description"],
+            group_id,
+        )
+
+        # Copy statements to new group
+        await conn.execute(
+            """
+            INSERT INTO statements (
+                user_id, report_group_id, file_name, file_format, file_size,
+                bank_name, encrypted_text, encryption_iv, status
+            )
+            SELECT user_id, $1, file_name, file_format, file_size,
+                   bank_name, encrypted_text, encryption_iv, status
+            FROM statements
+            WHERE report_group_id = $2
+            """,
+            str(new_row["id"]),
+            group_id,
+        )
+
+        # Get copied statements
+        statement_rows = await conn.fetch(
+            """
+            SELECT id, file_name, file_format, file_size, bank_name, status,
+                   error_message, created_at
+            FROM statements
+            WHERE report_group_id = $1
+            ORDER BY created_at ASC
+            """,
+            str(new_row["id"]),
+        )
+
+    statements = [
+        StatementListItem(
+            id=str(s["id"]),
+            file_name=s["file_name"],
+            file_format=s["file_format"],
+            file_size=s["file_size"],
+            bank_name=s["bank_name"],
+            status=s["status"],
+            error_message=s["error_message"],
+            created_at=s["created_at"].isoformat(),
+        )
+        for s in statement_rows
+    ]
+
+    return ReportGroupResponse(
+        id=str(new_row["id"]),
+        name=new_row["name"],
+        description=new_row["description"],
+        status=new_row["status"],
+        combined_result=None,
+        statements=statements,
+        parent_report_id=str(new_row["parent_report_id"]),
+        created_at=new_row["created_at"].isoformat(),
+        updated_at=new_row["updated_at"].isoformat(),
+    )
+
+
+# --- Encryption Key Management ---
+
+
+@app.post("/users/encryption-key", response_model=KeySetupResponse)
+async def setup_encryption_key(
+    data: KeySetupRequest, user: dict = Depends(require_auth)
+):
+    """Store user's encryption key salt for key derivation."""
+    async with get_db() as conn:
+        # Check if key already exists
+        existing = await conn.fetchrow(
+            "SELECT id FROM user_keys WHERE user_id = $1",
+            user["id"],
+        )
+
+        if existing:
+            # Update existing key
+            await conn.execute(
+                """
+                UPDATE user_keys
+                SET salt = $1, verification_hash = $2, created_at = NOW()
+                WHERE user_id = $3
+                """,
+                data.salt,
+                data.verification_hash,
+                user["id"],
+            )
+        else:
+            # Create new key
+            await conn.execute(
+                """
+                INSERT INTO user_keys (user_id, salt, verification_hash)
+                VALUES ($1, $2, $3)
+                """,
+                user["id"],
+                data.salt,
+                data.verification_hash,
+            )
+
+    return KeySetupResponse(success=True, message="Түлхүүр амжилттай хадгалагдлаа")
+
+
+@app.get("/users/encryption-key", response_model=KeyInfoResponse)
+async def get_encryption_key_info(user: dict = Depends(require_auth)):
+    """Get user's key salt for re-deriving encryption key."""
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "SELECT salt FROM user_keys WHERE user_id = $1",
+            user["id"],
+        )
+
+    if not row:
+        return KeyInfoResponse(has_key=False)
+
+    return KeyInfoResponse(has_key=True, salt=row["salt"])
 
 
 if __name__ == "__main__":
