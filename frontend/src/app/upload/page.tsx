@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSession, signIn } from "next-auth/react";
 import { PdfUpload } from "@/components/pdf-upload";
@@ -10,10 +10,46 @@ import { Button } from "@/components/ui/button";
 import type { ActionState, FinancialGuideReport } from "@/types";
 import { FileText, Shield, Zap, ArrowLeft, Target, LogIn } from "lucide-react";
 
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
+
 export default function UploadPage() {
   const { data: session, status } = useSession();
   const [result, setResult] = useState<FinancialGuideReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(true);
+
+  // Sync user with backend
+  useEffect(() => {
+    const syncUser = async () => {
+      if (status === "authenticated" && session?.accessToken) {
+        try {
+          const response = await fetch(`${BACKEND_URL}/auth/google`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              access_token: session.accessToken,
+            }),
+          });
+
+          if (!response.ok) {
+            // Don't show error to user, just log it
+            console.error("Failed to sync user with backend");
+          }
+        } catch (error) {
+          console.error("Error syncing user:", error);
+        } finally {
+          setIsSyncing(false);
+        }
+      } else if (status !== "loading") {
+        setIsSyncing(false);
+      }
+    };
+
+    syncUser();
+  }, [session, status]);
 
   const handleAnalysisComplete = (state: ActionState) => {
     if (state.success && state.data) {
@@ -34,8 +70,8 @@ export default function UploadPage() {
     return <FinancialGuide report={result} onReset={handleReset} />;
   }
 
-  // Show loading while checking auth
-  if (status === "loading") {
+  // Show loading while checking auth or syncing user
+  if (status === "loading" || isSyncing) {
     return (
       <div className="max-w-2xl mx-auto space-y-8">
         <div className="flex items-center justify-center py-12">
