@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useSession, signIn } from "next-auth/react";
 import { PdfUpload } from "@/components/pdf-upload";
@@ -18,11 +18,17 @@ export default function UploadPage() {
   const [result, setResult] = useState<FinancialGuideReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(true);
+  const hasSynced = useRef(false);
 
-  // Sync user with backend
+  // Sync user with backend, once on successful authentication
   useEffect(() => {
     const syncUser = async () => {
-      if (status === "authenticated" && session?.accessToken) {
+      if (
+        status === "authenticated" &&
+        session?.accessToken &&
+        !hasSynced.current
+      ) {
+        hasSynced.current = true; // Prevent re-sync
         try {
           const response = await fetch(`${BACKEND_URL}/auth/google`, {
             method: "POST",
@@ -35,7 +41,6 @@ export default function UploadPage() {
           });
 
           if (!response.ok) {
-            // Don't show error to user, just log it
             console.error("Failed to sync user with backend");
           }
         } catch (error) {
