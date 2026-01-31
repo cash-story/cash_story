@@ -1131,6 +1131,8 @@ async def create_transaction(
     statement_id: str, data: TransactionCreate, user: dict = Depends(require_auth)
 ):
     """Manually add a transaction to a statement."""
+    from datetime import date as date_type
+
     async with get_db() as conn:
         # Verify statement belongs to user
         stmt = await conn.fetchrow(
@@ -1149,6 +1151,17 @@ async def create_transaction(
         if data.type not in ("income", "expense"):
             raise HTTPException(status_code=400, detail="Төрөл буруу байна")
 
+        # Parse date string to date object
+        try:
+            txn_date = date_type.fromisoformat(data.date)
+        except ValueError:
+            try:
+                txn_date = datetime.strptime(data.date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=400, detail="Огноо буруу форматтай байна"
+                )
+
         is_categorized = data.category_id is not None
 
         row = await conn.fetchrow(
@@ -1164,7 +1177,7 @@ async def create_transaction(
             """,
             statement_id,
             user["id"],
-            data.date,
+            txn_date,
             data.description,
             data.amount,
             data.type,
@@ -1203,6 +1216,8 @@ async def update_transaction(
     transaction_id: str, data: TransactionUpdate, user: dict = Depends(require_auth)
 ):
     """Update a transaction (e.g., assign category)."""
+    from datetime import date as date_type
+
     async with get_db() as conn:
         # Verify transaction belongs to user
         txn = await conn.fetchrow(
@@ -1219,8 +1234,18 @@ async def update_transaction(
         param_idx = 1
 
         if data.date is not None:
+            # Parse date string to date object
+            try:
+                txn_date = date_type.fromisoformat(data.date)
+            except ValueError:
+                try:
+                    txn_date = datetime.strptime(data.date, "%Y-%m-%d").date()
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400, detail="Огноо буруу форматтай байна"
+                    )
             updates.append(f"date = ${param_idx}")
-            values.append(data.date)
+            values.append(txn_date)
             param_idx += 1
 
         if data.description is not None:
@@ -1339,6 +1364,8 @@ async def bulk_create_transactions(
     user: dict = Depends(require_auth),
 ):
     """Bulk create transactions for a statement (from AI parsing)."""
+    from datetime import date as date_type
+
     async with get_db() as conn:
         # Verify statement belongs to user
         stmt = await conn.fetchrow(
@@ -1358,6 +1385,16 @@ async def bulk_create_transactions(
             if txn.type not in ("income", "expense"):
                 continue
 
+            # Parse date string to date object
+            try:
+                txn_date = date_type.fromisoformat(txn.date)
+            except ValueError:
+                # Try to parse common date formats
+                try:
+                    txn_date = datetime.strptime(txn.date, "%Y-%m-%d").date()
+                except ValueError:
+                    continue  # Skip invalid dates
+
             row = await conn.fetchrow(
                 """
                 INSERT INTO transactions (
@@ -1369,7 +1406,7 @@ async def bulk_create_transactions(
                 """,
                 statement_id,
                 user["id"],
-                txn.date,
+                txn_date,
                 txn.description,
                 txn.amount,
                 txn.type,
