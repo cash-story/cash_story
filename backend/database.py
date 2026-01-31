@@ -94,6 +94,65 @@ async def init_db():
             )
         """)
 
+        # Categories table (predefined categories for income/expense)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                name_en TEXT,
+                type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+                icon TEXT,
+                color TEXT,
+                is_default BOOLEAN DEFAULT false,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # Transactions table (parsed from statements)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS transactions (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                statement_id UUID REFERENCES statements(id) ON DELETE CASCADE,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                date DATE NOT NULL,
+                description TEXT NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
+                category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+                is_categorized BOOLEAN DEFAULT false,
+                ai_suggested_category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+                raw_data JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
+        # Seed default categories if not exists
+        await conn.execute("""
+            INSERT INTO categories (id, user_id, name, name_en, type, icon, color, is_default, sort_order)
+            SELECT gen_random_uuid(), NULL, name, name_en, type, icon, color, true, sort_order
+            FROM (VALUES
+                ('Цалин', 'Salary', 'income', 'banknote', '#22c55e', 1),
+                ('Бизнесийн орлого', 'Business Income', 'income', 'briefcase', '#16a34a', 2),
+                ('Хөрөнгө оруулалтын орлого', 'Investment Income', 'income', 'trending-up', '#15803d', 3),
+                ('Бусад орлого', 'Other Income', 'income', 'plus-circle', '#166534', 4),
+                ('Хоол хүнс', 'Food & Groceries', 'expense', 'utensils', '#ef4444', 1),
+                ('Тээвэр', 'Transportation', 'expense', 'car', '#f97316', 2),
+                ('Түрээс', 'Rent', 'expense', 'home', '#eab308', 3),
+                ('Ком үнэ', 'Utilities', 'expense', 'zap', '#84cc16', 4),
+                ('Зугаа цэнгэл', 'Entertainment', 'expense', 'gamepad-2', '#06b6d4', 5),
+                ('Худалдаа', 'Shopping', 'expense', 'shopping-bag', '#8b5cf6', 6),
+                ('Эрүүл мэнд', 'Health', 'expense', 'heart-pulse', '#ec4899', 7),
+                ('Боловсрол', 'Education', 'expense', 'graduation-cap', '#6366f1', 8),
+                ('Даатгал', 'Insurance', 'expense', 'shield', '#14b8a6', 9),
+                ('Зээл төлбөр', 'Loan Payment', 'expense', 'credit-card', '#f43f5e', 10),
+                ('Бусад зарлага', 'Other Expense', 'expense', 'more-horizontal', '#6b7280', 11)
+            ) AS t(name, name_en, type, icon, color, sort_order)
+            WHERE NOT EXISTS (SELECT 1 FROM categories WHERE is_default = true LIMIT 1)
+        """)
+
         # Indexes for better query performance
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)
@@ -112,6 +171,21 @@ async def init_db():
         """)
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_statements_report_group_id ON statements(report_group_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_categories_user_id ON categories(user_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_categories_type ON categories(type)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_transactions_statement_id ON transactions(statement_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_transactions_category_id ON transactions(category_id)
         """)
 
 

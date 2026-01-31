@@ -19,6 +19,8 @@ from models import (
     AnalysisCreate,
     AnalysisListItem,
     AnalysisResponse,
+    CategoryListResponse,
+    CategoryResponse,
     ExtractionResult,
     KeyInfoResponse,
     KeySetupRequest,
@@ -29,6 +31,10 @@ from models import (
     ReportGroupUpdate,
     StatementListItem,
     StatementResponse,
+    TransactionCreate,
+    TransactionListResponse,
+    TransactionResponse,
+    TransactionUpdate,
     UserResponse,
 )
 from parsers import ParserFactory
@@ -1003,6 +1009,408 @@ async def get_encryption_key_info(user: dict = Depends(require_auth)):
         return KeyInfoResponse(has_key=False)
 
     return KeyInfoResponse(has_key=True, salt=row["salt"])
+
+
+# --- Categories Endpoints ---
+
+
+@app.get("/categories", response_model=CategoryListResponse)
+async def get_categories(user: dict = Depends(require_auth)):
+    """Get all categories (default + user custom) grouped by type."""
+    async with get_db() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, name, name_en, type, icon, color, is_default, sort_order, created_at
+            FROM categories
+            WHERE user_id IS NULL OR user_id = $1
+            ORDER BY is_default DESC, sort_order ASC, name ASC
+            """,
+            user["id"],
+        )
+
+    income_categories = []
+    expense_categories = []
+
+    for row in rows:
+        category = CategoryResponse(
+            id=str(row["id"]),
+            name=row["name"],
+            name_en=row["name_en"],
+            type=row["type"],
+            icon=row["icon"],
+            color=row["color"],
+            is_default=row["is_default"],
+            sort_order=row["sort_order"],
+            created_at=row["created_at"].isoformat(),
+        )
+        if row["type"] == "income":
+            income_categories.append(category)
+        else:
+            expense_categories.append(category)
+
+    return CategoryListResponse(income=income_categories, expense=expense_categories)
+
+
+# --- Transactions Endpoints ---
+
+
+@app.get(
+    "/statements/{statement_id}/transactions", response_model=TransactionListResponse
+)
+async def get_statement_transactions(
+    statement_id: str, user: dict = Depends(require_auth)
+):
+    """Get all transactions for a statement."""
+    async with get_db() as conn:
+        # Verify statement belongs to user
+        stmt = await conn.fetchrow(
+            """
+            SELECT s.id FROM statements s
+            JOIN report_groups rg ON rg.id = s.report_group_id
+            WHERE s.id = $1 AND rg.user_id = $2
+            """,
+            statement_id,
+            user["id"],
+        )
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Хуулга олдсонгүй")
+
+        rows = await conn.fetch(
+            """
+            SELECT t.id, t.statement_id, t.date, t.description, t.amount, t.type,
+                   t.category_id, c.name as category_name,
+                   t.is_categorized, t.ai_suggested_category_id,
+                   ac.name as ai_suggested_category_name,
+                   t.created_at, t.updated_at
+            FROM transactions t
+            LEFT JOIN categories c ON c.id = t.category_id
+            LEFT JOIN categories ac ON ac.id = t.ai_suggested_category_id
+            WHERE t.statement_id = $1
+            ORDER BY t.date DESC, t.created_at DESC
+            """,
+            statement_id,
+        )
+
+    transactions = [
+        TransactionResponse(
+            id=str(row["id"]),
+            statement_id=str(row["statement_id"]) if row["statement_id"] else None,
+            date=row["date"].isoformat(),
+            description=row["description"],
+            amount=float(row["amount"]),
+            type=row["type"],
+            category_id=str(row["category_id"]) if row["category_id"] else None,
+            category_name=row["category_name"],
+            is_categorized=row["is_categorized"],
+            ai_suggested_category_id=str(row["ai_suggested_category_id"])
+            if row["ai_suggested_category_id"]
+            else None,
+            ai_suggested_category_name=row["ai_suggested_category_name"],
+            created_at=row["created_at"].isoformat(),
+            updated_at=row["updated_at"].isoformat(),
+        )
+        for row in rows
+    ]
+
+    categorized = sum(1 for t in transactions if t.is_categorized)
+
+    return TransactionListResponse(
+        transactions=transactions,
+        total=len(transactions),
+        categorized_count=categorized,
+        uncategorized_count=len(transactions) - categorized,
+    )
+
+
+@app.post(
+    "/statements/{statement_id}/transactions",
+    response_model=TransactionResponse,
+    status_code=201,
+)
+async def create_transaction(
+    statement_id: str, data: TransactionCreate, user: dict = Depends(require_auth)
+):
+    """Manually add a transaction to a statement."""
+    async with get_db() as conn:
+        # Verify statement belongs to user
+        stmt = await conn.fetchrow(
+            """
+            SELECT s.id FROM statements s
+            JOIN report_groups rg ON rg.id = s.report_group_id
+            WHERE s.id = $1 AND rg.user_id = $2
+            """,
+            statement_id,
+            user["id"],
+        )
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Хуулга олдсонгүй")
+
+        # Validate type
+        if data.type not in ("income", "expense"):
+            raise HTTPException(status_code=400, detail="Төрөл буруу байна")
+
+        is_categorized = data.category_id is not None
+
+        row = await conn.fetchrow(
+            """
+            INSERT INTO transactions (
+                statement_id, user_id, date, description, amount, type,
+                category_id, is_categorized
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id, statement_id, date, description, amount, type,
+                      category_id, is_categorized, ai_suggested_category_id,
+                      created_at, updated_at
+            """,
+            statement_id,
+            user["id"],
+            data.date,
+            data.description,
+            data.amount,
+            data.type,
+            data.category_id,
+            is_categorized,
+        )
+
+        # Get category name if exists
+        category_name = None
+        if row["category_id"]:
+            cat = await conn.fetchrow(
+                "SELECT name FROM categories WHERE id = $1", row["category_id"]
+            )
+            if cat:
+                category_name = cat["name"]
+
+    return TransactionResponse(
+        id=str(row["id"]),
+        statement_id=str(row["statement_id"]) if row["statement_id"] else None,
+        date=row["date"].isoformat(),
+        description=row["description"],
+        amount=float(row["amount"]),
+        type=row["type"],
+        category_id=str(row["category_id"]) if row["category_id"] else None,
+        category_name=category_name,
+        is_categorized=row["is_categorized"],
+        ai_suggested_category_id=None,
+        ai_suggested_category_name=None,
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
+    )
+
+
+@app.put("/transactions/{transaction_id}", response_model=TransactionResponse)
+async def update_transaction(
+    transaction_id: str, data: TransactionUpdate, user: dict = Depends(require_auth)
+):
+    """Update a transaction (e.g., assign category)."""
+    async with get_db() as conn:
+        # Verify transaction belongs to user
+        txn = await conn.fetchrow(
+            "SELECT id FROM transactions WHERE id = $1 AND user_id = $2",
+            transaction_id,
+            user["id"],
+        )
+        if not txn:
+            raise HTTPException(status_code=404, detail="Гүйлгээ олдсонгүй")
+
+        # Build dynamic update
+        updates = ["updated_at = NOW()"]
+        values = []
+        param_idx = 1
+
+        if data.date is not None:
+            updates.append(f"date = ${param_idx}")
+            values.append(data.date)
+            param_idx += 1
+
+        if data.description is not None:
+            updates.append(f"description = ${param_idx}")
+            values.append(data.description)
+            param_idx += 1
+
+        if data.amount is not None:
+            updates.append(f"amount = ${param_idx}")
+            values.append(data.amount)
+            param_idx += 1
+
+        if data.type is not None:
+            if data.type not in ("income", "expense"):
+                raise HTTPException(status_code=400, detail="Төрөл буруу байна")
+            updates.append(f"type = ${param_idx}")
+            values.append(data.type)
+            param_idx += 1
+
+        if data.category_id is not None:
+            updates.append(f"category_id = ${param_idx}")
+            values.append(data.category_id if data.category_id != "" else None)
+            param_idx += 1
+            # Auto-set is_categorized when category is set
+            if data.category_id != "":
+                updates.append(f"is_categorized = true")
+            else:
+                updates.append(f"is_categorized = false")
+
+        if data.is_categorized is not None:
+            updates.append(f"is_categorized = ${param_idx}")
+            values.append(data.is_categorized)
+            param_idx += 1
+
+        values.extend([transaction_id, user["id"]])
+
+        query = f"""
+            UPDATE transactions
+            SET {", ".join(updates)}
+            WHERE id = ${param_idx} AND user_id = ${param_idx + 1}
+            RETURNING id, statement_id, date, description, amount, type,
+                      category_id, is_categorized, ai_suggested_category_id,
+                      created_at, updated_at
+        """
+
+        row = await conn.fetchrow(query, *values)
+
+        # Get category names
+        category_name = None
+        ai_suggested_category_name = None
+        if row["category_id"]:
+            cat = await conn.fetchrow(
+                "SELECT name FROM categories WHERE id = $1", row["category_id"]
+            )
+            if cat:
+                category_name = cat["name"]
+        if row["ai_suggested_category_id"]:
+            cat = await conn.fetchrow(
+                "SELECT name FROM categories WHERE id = $1",
+                row["ai_suggested_category_id"],
+            )
+            if cat:
+                ai_suggested_category_name = cat["name"]
+
+    return TransactionResponse(
+        id=str(row["id"]),
+        statement_id=str(row["statement_id"]) if row["statement_id"] else None,
+        date=row["date"].isoformat(),
+        description=row["description"],
+        amount=float(row["amount"]),
+        type=row["type"],
+        category_id=str(row["category_id"]) if row["category_id"] else None,
+        category_name=category_name,
+        is_categorized=row["is_categorized"],
+        ai_suggested_category_id=str(row["ai_suggested_category_id"])
+        if row["ai_suggested_category_id"]
+        else None,
+        ai_suggested_category_name=ai_suggested_category_name,
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
+    )
+
+
+@app.delete("/transactions/{transaction_id}")
+async def delete_transaction(transaction_id: str, user: dict = Depends(require_auth)):
+    """Delete a transaction."""
+    async with get_db() as conn:
+        result = await conn.execute(
+            "DELETE FROM transactions WHERE id = $1 AND user_id = $2",
+            transaction_id,
+            user["id"],
+        )
+
+    if result == "DELETE 0":
+        raise HTTPException(status_code=404, detail="Гүйлгээ олдсонгүй")
+
+    return {"deleted": True}
+
+
+class BulkCreateTransaction(BaseModel):
+    date: str
+    description: str
+    amount: float
+    type: str
+    ai_suggested_category_id: Optional[str] = None
+
+
+class BulkCreateRequest(BaseModel):
+    transactions: list[BulkCreateTransaction]
+
+
+@app.post("/statements/{statement_id}/transactions/bulk", status_code=201)
+async def bulk_create_transactions(
+    statement_id: str,
+    data: BulkCreateRequest,
+    user: dict = Depends(require_auth),
+):
+    """Bulk create transactions for a statement (from AI parsing)."""
+    async with get_db() as conn:
+        # Verify statement belongs to user
+        stmt = await conn.fetchrow(
+            """
+            SELECT s.id FROM statements s
+            JOIN report_groups rg ON rg.id = s.report_group_id
+            WHERE s.id = $1 AND rg.user_id = $2
+            """,
+            statement_id,
+            user["id"],
+        )
+        if not stmt:
+            raise HTTPException(status_code=404, detail="Хуулга олдсонгүй")
+
+        created_ids = []
+        for txn in data.transactions:
+            if txn.type not in ("income", "expense"):
+                continue
+
+            row = await conn.fetchrow(
+                """
+                INSERT INTO transactions (
+                    statement_id, user_id, date, description, amount, type,
+                    ai_suggested_category_id, is_categorized
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, false)
+                RETURNING id
+                """,
+                statement_id,
+                user["id"],
+                txn.date,
+                txn.description,
+                txn.amount,
+                txn.type,
+                txn.ai_suggested_category_id,
+            )
+            created_ids.append(str(row["id"]))
+
+    return {"created": len(created_ids), "ids": created_ids}
+
+
+class BulkUpdateRequest(BaseModel):
+    transaction_ids: list[str]
+    category_id: str
+
+
+@app.post("/transactions/bulk-update")
+async def bulk_update_transactions(
+    data: BulkUpdateRequest,
+    user: dict = Depends(require_auth),
+):
+    """Bulk update multiple transactions with the same category."""
+    if not data.transaction_ids:
+        raise HTTPException(status_code=400, detail="Гүйлгээ сонгоогүй байна")
+
+    async with get_db() as conn:
+        # Update all transactions that belong to user
+        result = await conn.execute(
+            """
+            UPDATE transactions
+            SET category_id = $1, is_categorized = true, updated_at = NOW()
+            WHERE id = ANY($2) AND user_id = $3
+            """,
+            data.category_id if data.category_id else None,
+            data.transaction_ids,
+            user["id"],
+        )
+
+    # Extract count from result string like "UPDATE 5"
+    updated_count = int(result.split(" ")[1]) if result else 0
+
+    return {"updated": updated_count}
 
 
 if __name__ == "__main__":

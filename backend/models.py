@@ -145,3 +145,76 @@ class ExtractionResult(BaseModel):
     text: Optional[str] = None
     error: Optional[str] = None
     metadata: Optional[dict] = None
+
+
+# --- Category Models ---
+
+
+class CategoryResponse(BaseModel):
+    id: str
+    name: str
+    name_en: Optional[str] = None
+    type: str  # 'income' or 'expense'
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    is_default: bool
+    sort_order: int
+    created_at: str
+
+
+class CategoryListResponse(BaseModel):
+    income: list[CategoryResponse]
+    expense: list[CategoryResponse]
+
+
+# --- Transaction Models ---
+
+
+class TransactionCreate(BaseModel):
+    date: str  # ISO date string
+    description: str
+    amount: float
+    type: str  # 'income' or 'expense'
+    category_id: Optional[str] = None
+
+
+class TransactionUpdate(BaseModel):
+    date: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    type: Optional[str] = None
+    category_id: Optional[str] = None
+    is_categorized: Optional[bool] = None
+
+
+class TransactionResponse(BaseModel):
+    id: str
+    statement_id: Optional[str] = None
+    date: str
+    description: str
+    amount: float
+    type: str
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+    is_categorized: bool
+    ai_suggested_category_id: Optional[str] = None
+    ai_suggested_category_name: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class TransactionListResponse(BaseModel):
+    transactions: list[TransactionResponse]
+    total: int
+    categorized_count: int
+    uncategorized_count: int
+
+
+class ParseTransactionsRequest(BaseModel):
+    text: str  # Statement text to parse
+
+
+class ParseTransactionsResponse(BaseModel):
+    success: bool
+    transactions: list[TransactionResponse] = []
+    error: Optional[str] = None
