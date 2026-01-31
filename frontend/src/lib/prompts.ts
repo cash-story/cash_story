@@ -104,6 +104,61 @@ export function buildAnalysisPrompt(extractedText: string): string {
   return buildPart1Prompt(extractedText);
 }
 
+// Transaction Parsing Prompt
+export const TRANSACTION_PARSE_PROMPT = `Та банкны хуулгаас гүйлгээнүүдийг задлах үүрэгтэй.
+
+ДААЛГАВАР:
+1. Банкны хуулгын текстээс бүх гүйлгээг (орлого, зарлага) олж задлана
+2. Гүйлгээ бүрийг доорх категоруудын аль нэгэнд хуваарилна
+3. JSON форматаар хариулна
+
+ДҮРМҮҮД:
+- date: YYYY-MM-DD формат
+- amount: Эерэг тоо (бүхэл)
+- type: "income" эсвэл "expense"
+- Зөвхөн JSON хариулна
+- Бүх текст МОНГОЛ хэлээр
+
+JSON БҮТЭЦ:
+{
+  "transactions": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": "Гүйлгээний тайлбар",
+      "amount": number,
+      "type": "income" | "expense",
+      "suggested_category_id": "category_uuid",
+      "suggested_category_name": "Категорийн нэр"
+    }
+  ]
+}
+
+КАТЕГОРИУД:
+`;
+
+export function buildTransactionParsePrompt(
+  extractedText: string,
+  categories: {
+    income: { id: string; name: string }[];
+    expense: { id: string; name: string }[];
+  },
+): string {
+  const categoryList = `
+ОРЛОГО:
+${categories.income.map((c) => `- ${c.id}: ${c.name}`).join("\n")}
+
+ЗАРЛАГА:
+${categories.expense.map((c) => `- ${c.id}: ${c.name}`).join("\n")}
+`;
+
+  return (
+    TRANSACTION_PARSE_PROMPT +
+    categoryList +
+    "\n\nБАНКНЫ ХУУЛГА:\n" +
+    extractedText
+  );
+}
+
 // Legacy prompt for backward compatibility
 export const FINANCIAL_ROADMAP_PROMPT = `Role: Та Монголын Санхүүгийн Зөвлөх бөгөөд банкны хуулгын мэдээллийг "Санхүүгийн Эрх Чөлөөний Төлөвлөгөө" болгон хувиргах үүрэгтэй.
 

@@ -1,13 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { formatCurrency } from "@/lib/utils";
-import type { Category } from "@/types";
+import type { LegacyCategory } from "@/types";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface CategoryListProps {
   type: "income" | "expense";
-  categories: Category[];
+  categories: LegacyCategory[];
   currency?: string;
 }
 

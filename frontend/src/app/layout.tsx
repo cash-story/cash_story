@@ -11,7 +11,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "МөнгөнТойм - Банкны хуулга шинжлэгч",
+  title: "Cash Story - Банкны хуулга шинжлэгч",
   description:
     "Банкны хуулга PDF файлаа оруулж, AI ашиглан санхүүгийн дэлгэрэнгүй тайлан авах",
 };
@@ -44,7 +44,9 @@ export default function RootLayout({
             </header>
 
             {/* Main content */}
-            <main className="container mx-auto px-4 py-8">{children}</main>
+            <main className="container mx-auto px-0 sm:px-4 py-4 sm:py-8">
+              {children}
+            </main>
 
             {/* Footer */}
             <footer className="border-t mt-auto">

@@ -12,9 +12,18 @@ import { MilestonesCard } from "./milestones-card";
 import { ProjectionsChart } from "./projections-chart";
 import { StrategyCard } from "./strategy-card";
 import { SummaryVerdictCard } from "./summary-verdict-card";
+import { IncomeOutcomeAnalysis } from "./income-outcome-analysis";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Building2, RefreshCw, Calendar, Target, FileText } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Building2,
+  RefreshCw,
+  Calendar,
+  FileText,
+  BarChart3,
+  Target,
+} from "lucide-react";
 
 interface FinancialGuideProps {
   report: FinancialGuideReport;
@@ -38,7 +47,7 @@ export function FinancialGuide({ report, onReset }: FinancialGuideProps) {
   } = report;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 px-4 sm:px-0">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
@@ -68,44 +77,106 @@ export function FinancialGuide({ report, onReset }: FinancialGuideProps) {
         )}
       </div>
 
-      {/* Summary Verdict - Most important at top */}
-      <SummaryVerdictCard verdict={verdict} />
+      {/* Tabs Navigation */}
+      <Tabs defaultValue="overview" className="w-full">
+        {/* Desktop/Tablet Tabs */}
+        <TabsList className="hidden sm:grid w-full grid-cols-3">
+          <TabsTrigger value="overview" className="gap-2">
+            <FileText className="w-4 h-4" />
+            Ерөнхий
+          </TabsTrigger>
+          <TabsTrigger value="income-outcome" className="gap-2">
+            <BarChart3 className="w-4 h-4" />
+            Орлого/Зарлага
+          </TabsTrigger>
+          <TabsTrigger value="planning" className="gap-2">
+            <Target className="w-4 h-4" />
+            Төлөвлөгөө
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Score Badge */}
-      <ScoreBadge score={score} />
+        {/* Mobile Bottom Navigation */}
+        <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-background border-t shadow-lg">
+          <TabsList className="grid w-full grid-cols-3 h-16 rounded-none bg-background">
+            <TabsTrigger
+              value="overview"
+              className="flex-col gap-1 h-full rounded-none data-[state=active]:bg-primary/10"
+            >
+              <FileText className="w-5 h-5" />
+              <span className="text-xs">Ерөнхий</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="income-outcome"
+              className="flex-col gap-1 h-full rounded-none data-[state=active]:bg-primary/10"
+            >
+              <BarChart3 className="w-5 h-5" />
+              <span className="text-xs">Орлого/Зарлага</span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="planning"
+              className="flex-col gap-1 h-full rounded-none data-[state=active]:bg-primary/10"
+            >
+              <Target className="w-5 h-5" />
+              <span className="text-xs">Төлөвлөгөө</span>
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-      {/* Risk Signals - Important warnings */}
-      {risks.risks.some((r) => r.detected) && <RiskSignalsCard risks={risks} />}
+        {/* Overview Tab */}
+        <TabsContent value="overview" className="space-y-6 mt-6">
+          {/* Summary Verdict - Most important at top */}
+          <SummaryVerdictCard verdict={verdict} />
 
-      {/* Analysis Section - Income, Expense, Cashflow */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <IncomeAnalysisCard income={income} currency={overview.currency} />
-        <ExpenseAnalysisCard expense={expense} currency={overview.currency} />
-        <CashflowAnalysisCard
-          cashflow={cashflow}
-          currency={overview.currency}
-        />
-      </div>
+          {/* Score Badge */}
+          <ScoreBadge score={score} />
 
-      {/* Behavior Patterns */}
-      <BehaviorPatternsCard behaviorPatterns={behaviorPatterns} />
+          {/* Risk Signals - Important warnings */}
+          {risks.risks.some((r) => r.detected) && (
+            <RiskSignalsCard risks={risks} />
+          )}
 
-      {/* Recommendations */}
-      <RecommendationsCard recommendations={recommendations} />
+          {/* Analysis Section - Income, Expense, Cashflow */}
+          <div className="grid gap-4 lg:grid-cols-3">
+            <IncomeAnalysisCard income={income} currency={overview.currency} />
+            <ExpenseAnalysisCard
+              expense={expense}
+              currency={overview.currency}
+            />
+            <CashflowAnalysisCard
+              cashflow={cashflow}
+              currency={overview.currency}
+            />
+          </div>
 
-      {/* Milestones and Strategy */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <MilestonesCard milestones={milestones} currentSavings={0} />
-        <StrategyCard strategy={strategy} />
-      </div>
+          {/* Behavior Patterns */}
+          <BehaviorPatternsCard behaviorPatterns={behaviorPatterns} />
 
-      {/* Projections */}
-      <ProjectionsChart projections={projections} />
+          {/* Recommendations */}
+          <RecommendationsCard recommendations={recommendations} />
 
-      {/* Risk Signals - If none detected, show at bottom */}
-      {!risks.risks.some((r) => r.detected) && (
-        <RiskSignalsCard risks={risks} />
-      )}
+          {/* Risk Signals - If none detected, show at bottom */}
+          {!risks.risks.some((r) => r.detected) && (
+            <RiskSignalsCard risks={risks} />
+          )}
+        </TabsContent>
+
+        {/* Income/Outcome Analysis Tab */}
+        <TabsContent value="income-outcome" className="mt-6">
+          <IncomeOutcomeAnalysis report={report} />
+        </TabsContent>
+
+        {/* Planning Tab */}
+        <TabsContent value="planning" className="space-y-6 mt-6">
+          {/* Milestones and Strategy */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <MilestonesCard milestones={milestones} currentSavings={0} />
+            <StrategyCard strategy={strategy} />
+          </div>
+
+          {/* Projections */}
+          <ProjectionsChart projections={projections} />
+        </TabsContent>
+      </Tabs>
 
       {/* Privacy notice */}
       <Card className="bg-muted/50">
@@ -117,6 +188,9 @@ export function FinancialGuide({ report, onReset }: FinancialGuideProps) {
           </p>
         </CardContent>
       </Card>
+
+      {/* Mobile bottom padding to account for fixed navigation */}
+      <div className="sm:hidden h-20" />
     </div>
   );
 }

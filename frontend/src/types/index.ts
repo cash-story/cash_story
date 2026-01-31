@@ -252,7 +252,7 @@ export interface MonthlySummary {
   expense: number;
 }
 
-export interface Category {
+export interface LegacyCategory {
   name: string;
   amount: number;
   percentage: number;
@@ -290,4 +290,56 @@ export interface ActionState {
   success: boolean;
   data?: FinancialGuideReport;
   error?: string;
+}
+
+// ============================================
+// Transaction Categorization Types
+// ============================================
+export interface Category {
+  id: string;
+  name: string;
+  name_en?: string;
+  type: "income" | "expense";
+  icon?: string;
+  color?: string;
+  is_default: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface CategoryList {
+  income: Category[];
+  expense: Category[];
+}
+
+export interface ParsedTransaction {
+  date: string;
+  description: string;
+  amount: number;
+  type: "income" | "expense";
+  suggested_category_id?: string;
+  suggested_category_name?: string;
+}
+
+export interface Transaction {
+  id: string;
+  statement_id?: string;
+  date: string;
+  description: string;
+  amount: number;
+  type: "income" | "expense";
+  category_id?: string;
+  category_name?: string;
+  is_categorized: boolean;
+  ai_suggested_category_id?: string;
+  ai_suggested_category_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TransactionListResponse {
+  transactions: Transaction[];
+  total: number;
+  categorized_count: number;
+  uncategorized_count: number;
 }
