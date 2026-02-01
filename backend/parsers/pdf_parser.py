@@ -252,28 +252,40 @@ class PdfParser(BaseParser):
     def _extract_transactions_from_text(self, raw_text: str) -> List[ParsedTransaction]:
         """
         Extract transactions from raw text when table extraction fails.
-
-        TDB PDF extraction produces tab-separated values where dates are split:
-        - Previous cell ends with year prefix like 'у20' or 'ШИМТГЭЛ20'
-        - Next cell has 'YY.M.D' format like '26.2.1'
-        - Followed by: time, teller, income, expense, rate, account, balance, description
+        Tries multiple methods to handle different PDF text formats.
         """
         transactions = []
 
-        # Split by tabs
+        # Method 1: Tab-separated format (single-line TDB)
+        transactions = self._extract_from_tab_separated(raw_text)
+        logger.info(
+            f"[PDF Parser] Tab-separated extraction: {len(transactions)} transactions"
+        )
+
+        # Method 2: If no results, try line-based format with full dates
+        if not transactions:
+            transactions = self._extract_from_lines(raw_text)
+            logger.info(
+                f"[PDF Parser] Line-based extraction: {len(transactions)} transactions"
+            )
+
+        logger.info(
+            f"[PDF Parser] Total from raw text: {len(transactions)} transactions"
+        )
+        return transactions
+
+    def _extract_from_tab_separated(self, raw_text: str) -> List[ParsedTransaction]:
+        """Extract from tab-separated single-line format (TDB single page)."""
+        transactions = []
         parts = raw_text.split("\t")
 
-        # Find indices where we have a short date pattern (YY.M.D or YY.MM.DD)
         i = 0
-        while i < len(parts) - 6:  # Need at least 6 more cells for a transaction
+        while i < len(parts) - 6:
             cell = parts[i].strip()
 
-            # Check if this looks like a partial date (26.2.1 or 26.02.01)
             if re.match(r"^\d{1,2}\.\d{1,2}\.\d{1,2}$", cell):
-                # Check if previous cell ends with year prefix (like '20')
                 prev_cell = parts[i - 1].strip() if i > 0 else ""
                 if prev_cell.endswith("20") or prev_cell.endswith("19"):
-                    # Parse the date: cell = "26.2.1" means year=26, month=2, day=1
                     date_parts_match = re.match(
                         r"^(\d{1,2})\.(\d{1,2})\.(\d{1,2})$", cell
                     )
@@ -284,12 +296,6 @@ class PdfParser(BaseParser):
 
                         parsed_date = self._parse_date(date_str)
                         if parsed_date:
-                            # Next cells: time, teller, income, expense, ...
-                            # parts[i+1] = time (3:32:01AM)
-                            # parts[i+2] = teller (400 - 1)
-                            # parts[i+3] = income (0.00 or 20,000.00)
-                            # parts[i+4] = expense (500.00 or 0.00)
-
                             try:
                                 income_str = (
                                     parts[i + 3].strip() if i + 3 < len(parts) else "0"
@@ -301,7 +307,6 @@ class PdfParser(BaseParser):
                                 income = self._parse_amount(income_str)
                                 expense = self._parse_amount(expense_str)
 
-                                # Determine transaction type
                                 if expense > 0 and income == 0:
                                     txn_type = "debit"
                                     amount = expense
@@ -312,25 +317,20 @@ class PdfParser(BaseParser):
                                     i += 1
                                     continue
 
-                                # Skip zero amounts
                                 if amount == 0:
                                     i += 1
                                     continue
 
-                                # Find description - look for text cells after numeric ones
                                 description = ""
                                 for j in range(i + 5, min(i + 15, len(parts))):
                                     desc_cell = parts[j].strip()
-                                    # Skip empty cells, pure numbers, short cells
                                     if not desc_cell or len(desc_cell) < 3:
                                         continue
                                     if re.match(r"^[\d,.\s]+$", desc_cell):
                                         continue
-                                    # Found a text cell - use it as description
                                     description = desc_cell
                                     break
 
-                                # Clean description
                                 description = re.sub(r"\s+", " ", description).strip()[
                                     :100
                                 ]
@@ -344,18 +344,94 @@ class PdfParser(BaseParser):
                                     raw_data={"parts": parts[i : i + 8]},
                                 )
                                 transactions.append(txn)
-                                logger.debug(
-                                    f"Found transaction: {parsed_date.date()} {txn_type} {amount}"
-                                )
 
                             except (IndexError, ValueError) as e:
-                                logger.debug(
-                                    f"Failed to parse transaction at index {i}: {e}"
-                                )
+                                logger.debug(f"Tab parse failed at {i}: {e}")
 
             i += 1
 
-        logger.info(f"Extracted {len(transactions)} transactions from raw text")
+        return transactions
+
+    def _extract_from_lines(self, raw_text: str) -> List[ParsedTransaction]:
+        """Extract from multi-line format with full dates (multi-page PDFs)."""
+        transactions = []
+
+        # Split by newlines
+        lines = raw_text.split("\n")
+
+        # Pattern for full date: 2026.2.1 or 2026.02.01 or 2026-02-01
+        date_pattern = r"(20\d{2}[.\-/]\d{1,2}[.\-/]\d{1,2})"
+        # Pattern for amounts: 0.00, 500.00, 20,000.00
+        amount_pattern = r"([\d,]+\.\d{2})"
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Skip header/summary lines
+            line_lower = line.lower()
+            if any(
+                kw in line_lower
+                for kw in ["огноо", "теллер", "нийт:", "total", "үлдэгдэл:"]
+            ):
+                continue
+
+            # Find date in line
+            date_match = re.search(date_pattern, line)
+            if not date_match:
+                continue
+
+            parsed_date = self._parse_date(date_match.group(1))
+            if not parsed_date:
+                continue
+
+            # Find all amounts in line
+            amounts = re.findall(amount_pattern, line)
+            if len(amounts) < 2:
+                continue
+
+            # For TDB: typically income then expense columns
+            income = self._parse_amount(amounts[0])
+            expense = self._parse_amount(amounts[1])
+
+            if expense > 0 and income == 0:
+                txn_type = "debit"
+                amount = expense
+            elif income > 0 and expense == 0:
+                txn_type = "credit"
+                amount = income
+            elif income > 0:
+                txn_type = "credit"
+                amount = income
+            else:
+                continue
+
+            if amount == 0:
+                continue
+
+            # Extract description - Mongolian/English text
+            desc_parts = re.findall(
+                r"[А-Яа-яҮүӨөA-Za-z][А-Яа-яҮүӨөA-Za-z\s\-:()]+", line, re.UNICODE
+            )
+            description = ""
+            for part in desc_parts:
+                part = part.strip()
+                # Skip short parts and header-like text
+                if len(part) > 3 and part.lower() not in ["am", "pm"]:
+                    description = part[:100]
+                    break
+
+            txn = ParsedTransaction(
+                date=parsed_date.date(),
+                description=description or "Гүйлгээ",
+                amount=amount,
+                transaction_type=txn_type,
+                balance=None,
+                raw_data={"line": line[:200]},
+            )
+            transactions.append(txn)
+
         return transactions
 
     async def parse(
@@ -408,9 +484,12 @@ class PdfParser(BaseParser):
 
             with pdfplumber.open(io.BytesIO(file_content)) as pdf:
                 page_count = len(pdf.pages)
-                logger.info(f"Processing PDF with {page_count} pages")
+                logger.info(f"[PDF Parser] Starting PDF with {page_count} pages")
 
                 for page_num, page in enumerate(pdf.pages):
+                    logger.info(
+                        f"[PDF Parser] Processing page {page_num + 1}/{page_count}"
+                    )
                     page_text_parts = []
                     extraction_success = False
                     page_tables = []
@@ -476,8 +555,13 @@ class PdfParser(BaseParser):
                     # Always collect tables for transaction extraction (even after text limit)
                     all_tables.extend(page_tables)
 
+                    logger.info(
+                        f"[PDF Parser] Page {page_num + 1}: extracted {len(page_text_parts)} text parts, "
+                        f"{len(page_tables)} tables, total_chars={total_chars}, text_limit_reached={text_limit_reached}"
+                    )
+
                 logger.info(
-                    f"Processed {page_count} pages, collected {len(all_tables)} tables"
+                    f"[PDF Parser] Finished all pages: {page_count} pages, {len(all_tables)} total tables, {total_chars} total chars"
                 )
 
             full_text = "\n".join(text_parts).strip()
@@ -498,17 +582,28 @@ class PdfParser(BaseParser):
             bank_name = self.detect_bank(full_text)
 
             # Extract transactions from tables
-            for table in all_tables:
+            logger.info(
+                f"[PDF Parser] Extracting transactions from {len(all_tables)} tables"
+            )
+            for idx, table in enumerate(all_tables):
                 txns = self._extract_transactions_from_table(table, bank_name)
+                logger.info(
+                    f"[PDF Parser] Table {idx + 1}: extracted {len(txns)} transactions"
+                )
                 all_transactions.extend(txns)
 
             # Fallback: if no transactions from tables, try extracting from raw text
             if not all_transactions:
-                logger.info("No transactions from tables, trying raw text extraction")
+                logger.info(
+                    "[PDF Parser] No transactions from tables, trying raw text extraction"
+                )
                 all_transactions = self._extract_transactions_from_text(full_text)
+                logger.info(
+                    f"[PDF Parser] Raw text extraction: {len(all_transactions)} transactions"
+                )
 
             logger.info(
-                f"PDF parsing complete: {len(all_transactions)} transactions extracted"
+                f"[PDF Parser] COMPLETE: {len(all_transactions)} total transactions extracted from {page_count} pages"
             )
 
             return ParseResult(
