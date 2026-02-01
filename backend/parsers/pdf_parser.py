@@ -462,20 +462,7 @@ class PdfParser(BaseParser):
                         parsed_date = self._parse_date(date_str)
                         if parsed_date:
                             try:
-                                # Print raw parts for debugging (print shows in Railway logs)
-                                print(
-                                    f"[TDB] date={date_str} | "
-                                    f"+1={parts[i + 1][:15] if i + 1 < len(parts) else '-'} | "
-                                    f"+2={parts[i + 2][:15] if i + 2 < len(parts) else '-'} | "
-                                    f"+3={parts[i + 3][:15] if i + 3 < len(parts) else '-'} | "
-                                    f"+4={parts[i + 4][:15] if i + 4 < len(parts) else '-'} | "
-                                    f"+5={parts[i + 5][:15] if i + 5 < len(parts) else '-'} | "
-                                    f"+6={parts[i + 6][:15] if i + 6 < len(parts) else '-'} | "
-                                    f"+7={parts[i + 7][:15] if i + 7 < len(parts) else '-'}",
-                                    flush=True,
-                                )
-
-                                # Correct offsets based on TDB format (from logs):
+                                # TDB format offsets:
                                 # +1 = Time (3:12:45AM)
                                 # +2 = Transaction code (400 - 1, 490 - 50)
                                 # +3 = Income (Орлого)
@@ -802,22 +789,34 @@ class PdfParser(BaseParser):
             logger.info(
                 f"[PDF Parser] Extracting transactions from {len(all_tables)} tables"
             )
+            table_transactions = []
             for idx, table in enumerate(all_tables):
                 txns = self._extract_transactions_from_table(table, bank_name)
                 logger.info(
                     f"[PDF Parser] Table {idx + 1}: extracted {len(txns)} transactions"
                 )
-                all_transactions.extend(txns)
+                table_transactions.extend(txns)
 
-            # Fallback: if no transactions from tables, try extracting from raw text
-            if not all_transactions:
+            # ALWAYS try raw text extraction as well (to catch transactions from pages where table extraction failed)
+            logger.info(
+                "[PDF Parser] Also trying raw text extraction for complete coverage"
+            )
+            text_transactions = self._extract_transactions_from_text(full_raw_text)
+            logger.info(
+                f"[PDF Parser] Raw text extraction: {len(text_transactions)} transactions"
+            )
+
+            # Combine both methods and deduplicate
+            # Use the method that found more transactions, OR combine if they found different ones
+            if len(table_transactions) >= len(text_transactions):
+                all_transactions = table_transactions
                 logger.info(
-                    "[PDF Parser] No transactions from tables, trying raw text extraction"
+                    f"[PDF Parser] Using table extraction: {len(all_transactions)} transactions"
                 )
-                # Use full_raw_text (all pages) instead of truncated full_text
-                all_transactions = self._extract_transactions_from_text(full_raw_text)
+            else:
+                all_transactions = text_transactions
                 logger.info(
-                    f"[PDF Parser] Raw text extraction: {len(all_transactions)} transactions"
+                    f"[PDF Parser] Using text extraction: {len(all_transactions)} transactions"
                 )
 
             logger.info(
