@@ -11,7 +11,7 @@ interface ParseTransactionsResult {
 
 export async function parseTransactions(
   text: string,
-  categories: CategoryList
+  categories: CategoryList,
 ): Promise<ParseTransactionsResult> {
   try {
     if (!text || text.length < 50) {
@@ -21,6 +21,14 @@ export async function parseTransactions(
       };
     }
 
+    // Log first 500 chars for debugging
+    console.log(
+      "[parseTransactions] Text preview:",
+      text.substring(0, 500),
+      "...",
+    );
+    console.log("[parseTransactions] Text length:", text.length);
+
     // Simplify categories for prompt
     const simplifiedCategories = {
       income: categories.income.map((c) => ({ id: c.id, name: c.name })),
@@ -29,7 +37,12 @@ export async function parseTransactions(
 
     const transactions = await parseTransactionsFromText(
       text,
-      simplifiedCategories
+      simplifiedCategories,
+    );
+
+    console.log(
+      "[parseTransactions] Parsed transactions count:",
+      transactions.length,
     );
 
     return {
