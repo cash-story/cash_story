@@ -337,15 +337,19 @@ class PdfParser(BaseParser):
                                     flush=True,
                                 )
 
-                                # Correct offsets based on TDB format:
-                                # +1 = Teller (skip this!)
-                                # +2 = Income (Орлого)
-                                # +3 = Expense (Зарлага)
+                                # Correct offsets based on TDB format (from logs):
+                                # +1 = Time (3:12:45AM)
+                                # +2 = Transaction code (400 - 1, 490 - 50)
+                                # +3 = Income (Орлого)
+                                # +4 = Expense (Зарлага)
+                                # +5 = Exchange rate (1.00)
+                                # +6 = Related account
+                                # +7 = Description
                                 income_str = (
-                                    parts[i + 2].strip() if i + 2 < len(parts) else "0"
+                                    parts[i + 3].strip() if i + 3 < len(parts) else "0"
                                 )
                                 expense_str = (
-                                    parts[i + 3].strip() if i + 3 < len(parts) else "0"
+                                    parts[i + 4].strip() if i + 4 < len(parts) else "0"
                                 )
 
                                 income = self._parse_amount(income_str)
@@ -369,21 +373,12 @@ class PdfParser(BaseParser):
                                     i += 1
                                     continue
 
-                                # Description is at the END - look for it after balance
-                                # Try offset +7, +8, or search for text
+                                # Description is at +7 based on logs
                                 description = ""
-                                for j in range(i + 7, min(i + 12, len(parts))):
-                                    desc_cell = parts[j].strip()
-                                    if not desc_cell or len(desc_cell) < 2:
-                                        continue
-                                    # Skip pure numeric cells
-                                    if re.match(r"^[\d,.\s]+$", desc_cell):
-                                        continue
-                                    # Skip very short codes
-                                    if len(desc_cell) < 3:
-                                        continue
-                                    description = desc_cell
-                                    break
+                                if i + 7 < len(parts):
+                                    desc_cell = parts[i + 7].strip()
+                                    if desc_cell and len(desc_cell) >= 2:
+                                        description = desc_cell
 
                                 description = re.sub(r"\s+", " ", description).strip()[
                                     :100
