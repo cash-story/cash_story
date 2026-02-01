@@ -2,7 +2,7 @@
 
 import { uploadSchema } from "@/schemas/upload";
 import { extractTextFromPdf } from "@/lib/pdf-parser";
-import { analyzeStatement } from "@/lib/gemini";
+import { analyzeStatement } from "@/lib/openai";
 import type { ActionState, FinancialGuideReport } from "@/types";
 
 export async function analyzePdf(formData: FormData): Promise<ActionState> {
@@ -53,7 +53,7 @@ export async function analyzePdf(formData: FormData): Promise<ActionState> {
       };
     }
 
-    // Analyze with Gemini
+    // Analyze with OpenAI
     let result;
     try {
       result = await analyzeStatement(extractedText);

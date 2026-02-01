@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 import {
   buildPart1Prompt,
   buildPart2Prompt,
@@ -8,54 +8,43 @@ import {
 import { financialGuideReportSchema } from "@/schemas/analysis";
 import type { FinancialGuideReport, ParsedTransaction } from "@/types";
 
-const apiKey = process.env.GEMINI_API_KEY;
-const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
+const apiKey = process.env.OPENAI_API_KEY;
+const openai = apiKey ? new OpenAI({ apiKey }) : null;
 
-// Helper to make a single Gemini request
-async function makeGeminiRequest(
+// Helper to make a single OpenAI request
+async function makeOpenAIRequest(
   prompt: string,
   partName: string,
 ): Promise<unknown> {
-  if (!genAI) {
-    throw new Error("GEMINI_API_KEY тохируулаагүй байна");
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY тохируулаагүй байна");
   }
 
-  // Use gemini-2.5-flash for good balance of speed and capability
-  const modelName = "gemini-2.5-flash";
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 65536,
-      responseMimeType: "application/json",
-    },
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: "You are a financial analyst. Always respond with valid JSON only, no markdown formatting.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+    temperature: 0.1,
+    max_tokens: 16000,
+    response_format: { type: "json_object" },
   });
 
-  const result = await model.generateContent(prompt);
-  const response = result.response;
+  const text = response.choices[0]?.message?.content;
 
-  const finishReason = response.candidates?.[0]?.finishReason;
-
-  if (finishReason === "MAX_TOKENS") {
-    throw new Error(`${partName}: AI хариу хэт урт байна`);
+  if (!text) {
+    throw new Error(`${partName}: AI хариу хоосон байна`);
   }
-
-  const text = response.text();
-
-  // Parse JSON
-  let cleanedText = text.trim();
-  if (cleanedText.startsWith("```json")) {
-    cleanedText = cleanedText.slice(7);
-  } else if (cleanedText.startsWith("```")) {
-    cleanedText = cleanedText.slice(3);
-  }
-  if (cleanedText.endsWith("```")) {
-    cleanedText = cleanedText.slice(0, -3);
-  }
-  cleanedText = cleanedText.trim();
 
   try {
-    return JSON.parse(cleanedText);
+    return JSON.parse(text);
   } catch {
     throw new Error(`${partName}: JSON хөрвүүлэлт амжилтгүй`);
   }
@@ -64,14 +53,14 @@ async function makeGeminiRequest(
 export async function analyzeStatement(
   extractedText: string,
 ): Promise<FinancialGuideReport> {
-  if (!genAI) {
-    throw new Error("GEMINI_API_KEY тохируулаагүй байна");
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY тохируулаагүй байна");
   }
 
   try {
     // Part 1: Core financial data
     const part1Prompt = buildPart1Prompt(extractedText);
-    const part1Result = (await makeGeminiRequest(
+    const part1Result = (await makeOpenAIRequest(
       part1Prompt,
       "Part1",
     )) as Record<string, unknown>;
@@ -81,7 +70,7 @@ export async function analyzeStatement(
       extractedText,
       JSON.stringify(part1Result),
     );
-    const part2Result = (await makeGeminiRequest(
+    const part2Result = (await makeOpenAIRequest(
       part2Prompt,
       "Part2",
     )) as Record<string, unknown>;
@@ -91,7 +80,7 @@ export async function analyzeStatement(
       JSON.stringify(part1Result),
       JSON.stringify(part2Result),
     );
-    const part3Result = (await makeGeminiRequest(
+    const part3Result = (await makeOpenAIRequest(
       part3Prompt,
       "Part3",
     )) as Record<string, unknown>;
@@ -122,14 +111,15 @@ export async function analyzeStatement(
       if (
         msg.includes("api_key") ||
         msg.includes("api key") ||
-        msg.includes("invalid key")
+        msg.includes("invalid key") ||
+        msg.includes("invalid_api_key")
       ) {
         throw new Error("API түлхүүрийн алдаа. Түлхүүрээ шалгана уу.");
       }
       if (
         msg.includes("quota") ||
         msg.includes("rate") ||
-        msg.includes("resource_exhausted")
+        msg.includes("rate_limit")
       ) {
         throw new Error("API хязгаарлалтад хүрсэн. Түр хүлээнэ үү.");
       }
@@ -149,13 +139,13 @@ export async function parseTransactionsFromText(
     expense: { id: string; name: string }[];
   },
 ): Promise<ParsedTransaction[]> {
-  if (!genAI) {
-    throw new Error("GEMINI_API_KEY тохируулаагүй байна");
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY тохируулаагүй байна");
   }
 
   try {
     const prompt = buildTransactionParsePrompt(extractedText, categories);
-    const result = (await makeGeminiRequest(prompt, "TransactionParse")) as {
+    const result = (await makeOpenAIRequest(prompt, "TransactionParse")) as {
       transactions: ParsedTransaction[];
     };
 
