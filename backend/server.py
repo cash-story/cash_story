@@ -92,7 +92,7 @@ async def health_check():
 
 
 @app.post("/extract", response_model=ExtractionResult)
-async def extract_text(file: UploadFile = File(...), max_chars: int = 50000):
+async def extract_text(file: UploadFile = File(...), max_chars: int = 500000):
     """
     Extract text from uploaded file (PDF, Excel, or CSV).
 

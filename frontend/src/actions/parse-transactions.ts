@@ -1,6 +1,6 @@
 "use server";
 
-import { parseTransactionsFromText } from "@/lib/gemini";
+import { parseTransactionsFromText } from "@/lib/openai";
 import type { ParsedTransaction, CategoryList } from "@/types";
 
 interface ParseTransactionsResult {
