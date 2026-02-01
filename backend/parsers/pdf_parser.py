@@ -252,27 +252,39 @@ class PdfParser(BaseParser):
     def _extract_transactions_from_text(self, raw_text: str) -> List[ParsedTransaction]:
         """
         Extract transactions from raw text when table extraction fails.
-        Tries multiple methods to handle different PDF text formats.
+        Runs BOTH extraction methods and combines results since TDB multi-page PDFs
+        have different formats: page 1 uses tab-separated (split dates),
+        pages 2+ use line-based (full dates).
         """
-        transactions = []
-
-        # Method 1: Tab-separated format (single-line TDB)
-        transactions = self._extract_from_tab_separated(raw_text)
+        # Method 1: Tab-separated format (single-line TDB, typically page 1)
+        tab_transactions = self._extract_from_tab_separated(raw_text)
         logger.info(
-            f"[PDF Parser] Tab-separated extraction: {len(transactions)} transactions"
+            f"[PDF Parser] Tab-separated extraction: {len(tab_transactions)} transactions"
         )
 
-        # Method 2: If no results, try line-based format with full dates
-        if not transactions:
-            transactions = self._extract_from_lines(raw_text)
-            logger.info(
-                f"[PDF Parser] Line-based extraction: {len(transactions)} transactions"
-            )
+        # Method 2: Line-based format with full dates (pages 2+)
+        line_transactions = self._extract_from_lines(raw_text)
+        logger.info(
+            f"[PDF Parser] Line-based extraction: {len(line_transactions)} transactions"
+        )
+
+        # Combine both results
+        all_transactions = tab_transactions + line_transactions
+
+        # Deduplicate by (date, amount, type) - same transaction might be extracted twice
+        seen = set()
+        unique_transactions = []
+        for txn in all_transactions:
+            key = (txn.date, txn.amount, txn.transaction_type)
+            if key not in seen:
+                seen.add(key)
+                unique_transactions.append(txn)
 
         logger.info(
-            f"[PDF Parser] Total from raw text: {len(transactions)} transactions"
+            f"[PDF Parser] Total from raw text: {len(unique_transactions)} transactions "
+            f"(after dedup from {len(all_transactions)})"
         )
-        return transactions
+        return unique_transactions
 
     def _extract_from_tab_separated(self, raw_text: str) -> List[ParsedTransaction]:
         """Extract from tab-separated single-line format (TDB single page)."""
