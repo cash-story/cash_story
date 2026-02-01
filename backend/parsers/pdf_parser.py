@@ -359,7 +359,7 @@ class PdfParser(BaseParser):
         return transactions
 
     async def parse(
-        self, file_content: bytes, filename: str, max_chars: int = 50000
+        self, file_content: bytes, filename: str, max_chars: int = 2000000
     ) -> ParseResult:
         """
         Extract text from a PDF file.
@@ -367,7 +367,7 @@ class PdfParser(BaseParser):
         Args:
             file_content: Raw bytes of the PDF file
             filename: Original filename
-            max_chars: Maximum characters to extract
+            max_chars: Maximum characters to extract (default 2MB for large statements)
 
         Returns:
             ParseResult with extracted text and metadata
@@ -378,6 +378,7 @@ class PdfParser(BaseParser):
             page_count = 0
             all_transactions = []
             all_tables = []  # Store raw tables for transaction extraction
+            text_limit_reached = False
 
             # Different table extraction strategies for different bank formats
             table_settings_list = [
@@ -407,12 +408,9 @@ class PdfParser(BaseParser):
 
             with pdfplumber.open(io.BytesIO(file_content)) as pdf:
                 page_count = len(pdf.pages)
+                logger.info(f"Processing PDF with {page_count} pages")
 
-                for page in pdf.pages:
-                    if total_chars >= max_chars:
-                        text_parts.append("\n\n[Текст хэт урт тул товчилсон...]")
-                        break
-
+                for page_num, page in enumerate(pdf.pages):
                     page_text_parts = []
                     extraction_success = False
                     page_tables = []
@@ -442,7 +440,7 @@ class PdfParser(BaseParser):
                                 )
                                 extraction_success = True
                                 logger.debug(
-                                    f"Table extraction successful with settings: {settings}"
+                                    f"Page {page_num + 1}: Table extraction successful"
                                 )
                                 break
 
@@ -459,17 +457,28 @@ class PdfParser(BaseParser):
                             page_text_parts = [
                                 line.strip() for line in lines if line.strip()
                             ]
-                            logger.debug("Using text extraction fallback")
+                            logger.debug(
+                                f"Page {page_num + 1}: Using text extraction fallback"
+                            )
 
-                    # Add to results
-                    for line in page_text_parts:
-                        text_parts.append(line)
-                        total_chars += len(line)
-                        if total_chars >= max_chars:
-                            break
+                    # Add text to results (up to limit)
+                    if not text_limit_reached:
+                        for line in page_text_parts:
+                            text_parts.append(line)
+                            total_chars += len(line)
+                            if total_chars >= max_chars:
+                                text_limit_reached = True
+                                text_parts.append(
+                                    "\n\n[Текст хэт урт тул товчилсон...]"
+                                )
+                                break
 
-                    # Collect tables for transaction extraction
+                    # Always collect tables for transaction extraction (even after text limit)
                     all_tables.extend(page_tables)
+
+                logger.info(
+                    f"Processed {page_count} pages, collected {len(all_tables)} tables"
+                )
 
             full_text = "\n".join(text_parts).strip()
 
