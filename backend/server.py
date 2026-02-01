@@ -653,6 +653,31 @@ async def upload_statement(
             error_message,
         )
 
+        statement_id = row["id"]
+
+        # If transactions were extracted directly from the file, save them
+        if result.success and result.transactions:
+            for txn in result.transactions:
+                txn_type = "income" if txn.transaction_type == "credit" else "expense"
+                await conn.execute(
+                    """
+                    INSERT INTO transactions (
+                        statement_id, user_id, date, description, amount, type,
+                        is_categorized
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, false)
+                    """,
+                    statement_id,
+                    user["id"],
+                    txn.date,
+                    txn.description,
+                    txn.amount,
+                    txn_type,
+                )
+            logger.info(
+                f"Saved {len(result.transactions)} transactions for statement {statement_id}"
+            )
+
         # Update report group's updated_at
         await conn.execute(
             "UPDATE report_groups SET updated_at = NOW() WHERE id = $1",
