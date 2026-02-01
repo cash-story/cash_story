@@ -80,7 +80,7 @@ async function extractTextWithNodeJs(buffer: Buffer): Promise<string> {
     }
 
     // Truncate to avoid token limits
-    const maxLength = 50000;
+    const maxLength = 500000;
     if (text.length > maxLength) {
       return text.slice(0, maxLength) + "\n\n[Текст хэт урт тул товчилсон...]";
     }

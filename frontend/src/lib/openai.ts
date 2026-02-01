@@ -25,7 +25,8 @@ async function makeOpenAIRequest(
     messages: [
       {
         role: "system",
-        content: "You are a financial analyst. Always respond with valid JSON only, no markdown formatting.",
+        content:
+          "You are a financial analyst. Always respond with valid JSON only, no markdown formatting.",
       },
       {
         role: "user",
@@ -105,6 +106,8 @@ export async function analyzeStatement(
 
     return validated.data as FinancialGuideReport;
   } catch (error) {
+    console.error("[OpenAI] Error:", error);
+
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();
 
@@ -112,14 +115,16 @@ export async function analyzeStatement(
         msg.includes("api_key") ||
         msg.includes("api key") ||
         msg.includes("invalid key") ||
-        msg.includes("invalid_api_key")
+        msg.includes("invalid_api_key") ||
+        msg.includes("incorrect api key")
       ) {
         throw new Error("API түлхүүрийн алдаа. Түлхүүрээ шалгана уу.");
       }
       if (
         msg.includes("quota") ||
-        msg.includes("rate") ||
-        msg.includes("rate_limit")
+        msg.includes("rate_limit") ||
+        msg.includes("rate limit") ||
+        msg.includes("too many requests")
       ) {
         throw new Error("API хязгаарлалтад хүрсэн. Түр хүлээнэ үү.");
       }
@@ -130,6 +135,34 @@ export async function analyzeStatement(
     }
     throw new Error("AI боловсруулалтын алдаа гарлаа");
   }
+}
+
+// Split text into chunks by lines, trying to keep ~10000 chars per chunk
+function splitTextIntoChunks(
+  text: string,
+  maxCharsPerChunk: number = 10000,
+): string[] {
+  const lines = text.split("\n");
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (const line of lines) {
+    if (
+      currentChunk.length + line.length + 1 > maxCharsPerChunk &&
+      currentChunk.length > 0
+    ) {
+      chunks.push(currentChunk);
+      currentChunk = line;
+    } else {
+      currentChunk += (currentChunk ? "\n" : "") + line;
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
 }
 
 export async function parseTransactionsFromText(
@@ -144,12 +177,37 @@ export async function parseTransactionsFromText(
   }
 
   try {
-    const prompt = buildTransactionParsePrompt(extractedText, categories);
-    const result = (await makeOpenAIRequest(prompt, "TransactionParse")) as {
-      transactions: ParsedTransaction[];
-    };
+    // Split large text into chunks to avoid token limits
+    const chunks = splitTextIntoChunks(extractedText, 10000);
+    console.log(
+      `[OpenAI] Parsing ${chunks.length} chunks from ${extractedText.length} chars`,
+    );
 
-    return result.transactions || [];
+    const allTransactions: ParsedTransaction[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(
+        `[OpenAI] Processing chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`,
+      );
+
+      const prompt = buildTransactionParsePrompt(chunks[i], categories);
+      const result = (await makeOpenAIRequest(
+        prompt,
+        `TransactionParse-${i + 1}`,
+      )) as {
+        transactions: ParsedTransaction[];
+      };
+
+      if (result.transactions && result.transactions.length > 0) {
+        allTransactions.push(...result.transactions);
+        console.log(
+          `[OpenAI] Chunk ${i + 1}: found ${result.transactions.length} transactions`,
+        );
+      }
+    }
+
+    console.log(`[OpenAI] Total transactions found: ${allTransactions.length}`);
+    return allTransactions;
   } catch (error) {
     if (error instanceof Error) {
       throw error;

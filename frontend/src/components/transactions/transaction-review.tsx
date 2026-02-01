@@ -74,6 +74,19 @@ export function TransactionReview({
   const handleParse = async () => {
     if (!statementText || !accessToken) return;
 
+    console.log(
+      "[TransactionReview] Statement text length:",
+      statementText.length,
+    );
+    console.log(
+      "[TransactionReview] First 500 chars:",
+      statementText.substring(0, 500),
+    );
+    console.log(
+      "[TransactionReview] Last 500 chars:",
+      statementText.substring(statementText.length - 500),
+    );
+
     setIsParsing(true);
     setError(null);
 

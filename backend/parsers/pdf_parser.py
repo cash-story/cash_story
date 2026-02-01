@@ -252,17 +252,23 @@ class PdfParser(BaseParser):
     def _extract_transactions_from_text(self, raw_text: str) -> List[ParsedTransaction]:
         """
         Extract transactions from raw text when table extraction fails.
-        Runs BOTH extraction methods and combines results since TDB multi-page PDFs
-        have different formats: page 1 uses tab-separated (split dates),
-        pages 2+ use line-based (full dates).
+        Tries multiple bank-specific extraction methods.
         """
-        # Method 1: Tab-separated format (single-line TDB, typically page 1)
+        # Method 1: MBank format (2-line per transaction)
+        mbank_transactions = self._extract_from_mbank(raw_text)
+        if mbank_transactions:
+            logger.info(
+                f"[PDF Parser] MBank extraction: {len(mbank_transactions)} transactions"
+            )
+            return mbank_transactions
+
+        # Method 2: Tab-separated format (single-line TDB, typically page 1)
         tab_transactions = self._extract_from_tab_separated(raw_text)
         logger.info(
             f"[PDF Parser] Tab-separated extraction: {len(tab_transactions)} transactions"
         )
 
-        # Method 2: Line-based format with full dates (pages 2+)
+        # Method 3: Line-based format with full dates (pages 2+)
         line_transactions = self._extract_from_lines(raw_text)
         logger.info(
             f"[PDF Parser] Line-based extraction: {len(line_transactions)} transactions"
@@ -285,6 +291,138 @@ class PdfParser(BaseParser):
             f"(after dedup from {len(all_transactions)})"
         )
         return unique_transactions
+
+    def _extract_from_mbank(self, raw_text: str) -> List[ParsedTransaction]:
+        """
+        Extract transactions from MBank format.
+
+        MBank format (2 lines per transaction):
+        Line 1: №\tDATE
+        Line 2: TIME\tCODE\tDescription\tAccount\tIncome\tExpense\tBalance
+
+        Example:
+        1\t2025-07-03
+        02:45:46\t2025-07-03 SMB\tLoan Auto Recovery\t\t0.00\t4,588.71\t74,407.62
+        """
+        transactions = []
+        lines = raw_text.split("\n")
+
+        # Check if this is MBank format by looking for header
+        is_mbank = any(
+            "Гүйлгээний" in line and "Орлого" in line and "Зарлага" in line
+            for line in lines[:10]
+        )
+
+        if not is_mbank:
+            return []
+
+        logger.info("[PDF Parser] Detected MBank format")
+
+        i = 0
+        while i < len(lines) - 1:
+            line1 = lines[i].strip()
+            line2 = lines[i + 1].strip() if i + 1 < len(lines) else ""
+
+            # Check if line1 matches pattern: №\tDATE (e.g., "1\t2025-07-03" or just "2025-07-03")
+            # Date pattern: YYYY-MM-DD
+            date_match = re.search(r"(\d{4}-\d{2}-\d{2})", line1)
+
+            if date_match:
+                date_str = date_match.group(1)
+                parsed_date = self._parse_date(date_str)
+
+                if parsed_date and line2:
+                    # Parse line2: TIME\tCODE\tDescription\tAccount\tIncome\tExpense\tBalance
+                    parts = line2.split("\t")
+
+                    if len(parts) >= 4:
+                        try:
+                            # Find income and expense columns (they contain amounts like "0.00" or "4,588.71")
+                            # Usually: parts[-3] = Income, parts[-2] = Expense, parts[-1] = Balance
+                            income_str = "0"
+                            expense_str = "0"
+                            description = ""
+                            balance = None
+
+                            # Look for amount patterns from the end
+                            amount_pattern = r"^[\d,]+\.\d{2}$"
+
+                            # Find amounts from end of parts
+                            amount_indices = []
+                            for idx in range(len(parts) - 1, -1, -1):
+                                if re.match(amount_pattern, parts[idx].strip()):
+                                    amount_indices.append(idx)
+                                if len(amount_indices) >= 3:
+                                    break
+
+                            if len(amount_indices) >= 3:
+                                # Typically: Balance, Expense, Income (from right to left)
+                                balance = self._parse_amount(parts[amount_indices[0]])
+                                expense_str = parts[amount_indices[1]]
+                                income_str = parts[amount_indices[2]]
+                            elif len(amount_indices) >= 2:
+                                expense_str = parts[amount_indices[0]]
+                                income_str = parts[amount_indices[1]]
+
+                            income = self._parse_amount(income_str)
+                            expense = self._parse_amount(expense_str)
+
+                            # Get description from middle parts
+                            # Skip time (first part) and amounts (last parts)
+                            desc_parts = []
+                            for idx, part in enumerate(parts):
+                                if idx == 0:  # Skip time
+                                    continue
+                                if idx in amount_indices:  # Skip amounts
+                                    continue
+                                if part.strip() and not re.match(
+                                    r"^\d+$", part.strip()
+                                ):
+                                    desc_parts.append(part.strip())
+                            description = " ".join(desc_parts)[:100]
+
+                            # Determine transaction type
+                            if expense > 0 and income == 0:
+                                txn_type = "debit"
+                                amount = expense
+                            elif income > 0 and expense == 0:
+                                txn_type = "credit"
+                                amount = income
+                            elif income > 0:
+                                txn_type = "credit"
+                                amount = income
+                            elif expense > 0:
+                                txn_type = "debit"
+                                amount = expense
+                            else:
+                                i += 1
+                                continue
+
+                            # Skip very small amounts (likely parsing errors)
+                            if amount < 1:
+                                i += 1
+                                continue
+
+                            txn = ParsedTransaction(
+                                date=parsed_date.date(),
+                                description=description or "Гүйлгээ",
+                                amount=amount,
+                                transaction_type=txn_type,
+                                balance=balance,
+                                raw_data={"line1": line1, "line2": line2},
+                            )
+                            transactions.append(txn)
+
+                            # Skip the second line since we processed it
+                            i += 2
+                            continue
+
+                        except Exception as e:
+                            logger.debug(f"MBank parse error at line {i}: {e}")
+
+            i += 1
+
+        return transactions
 
     def _extract_from_tab_separated(self, raw_text: str) -> List[ParsedTransaction]:
         """
@@ -551,6 +689,9 @@ class PdfParser(BaseParser):
                 },
             ]
 
+            # Collect ALL raw text for transaction extraction (separate from display text)
+            all_raw_text_parts = []
+
             with pdfplumber.open(io.BytesIO(file_content)) as pdf:
                 page_count = len(pdf.pages)
                 logger.info(f"[PDF Parser] Starting PDF with {page_count} pages")
@@ -609,7 +750,10 @@ class PdfParser(BaseParser):
                                 f"Page {page_num + 1}: Using text extraction fallback"
                             )
 
-                    # Add text to results (up to limit)
+                    # ALWAYS collect raw text for transaction extraction (all pages)
+                    all_raw_text_parts.extend(page_text_parts)
+
+                    # Add text to display results (up to limit)
                     if not text_limit_reached:
                         for line in page_text_parts:
                             text_parts.append(line)
@@ -634,21 +778,25 @@ class PdfParser(BaseParser):
                 )
 
             full_text = "\n".join(text_parts).strip()
+            # Use ALL raw text (not truncated) for transaction extraction
+            full_raw_text = "\n".join(all_raw_text_parts).strip()
 
             # Log extraction result for debugging
-            logger.info(f"PDF extraction: {len(text_parts)} lines, {total_chars} chars")
+            logger.info(
+                f"PDF extraction: {len(text_parts)} display lines, {len(all_raw_text_parts)} raw lines"
+            )
             if text_parts:
                 logger.debug(f"First 3 lines: {text_parts[:3]}")
 
-            if not full_text:
+            if not full_raw_text:
                 return ParseResult(
                     success=False,
                     raw_text="",
                     error="PDF файлаас текст олдсонгүй. Зураг PDF байж магадгүй.",
                 )
 
-            # Detect bank name
-            bank_name = self.detect_bank(full_text)
+            # Detect bank name from full raw text
+            bank_name = self.detect_bank(full_raw_text)
 
             # Extract transactions from tables
             logger.info(
@@ -666,7 +814,8 @@ class PdfParser(BaseParser):
                 logger.info(
                     "[PDF Parser] No transactions from tables, trying raw text extraction"
                 )
-                all_transactions = self._extract_transactions_from_text(full_text)
+                # Use full_raw_text (all pages) instead of truncated full_text
+                all_transactions = self._extract_transactions_from_text(full_raw_text)
                 logger.info(
                     f"[PDF Parser] Raw text extraction: {len(all_transactions)} transactions"
                 )
