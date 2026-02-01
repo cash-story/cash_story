@@ -3,11 +3,13 @@ PDF parser using pdfplumber.
 Optimized for bank statement PDFs with tabular data.
 """
 
+from __future__ import annotations
+
 import io
 import logging
 import re
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 import pdfplumber
 
@@ -21,7 +23,7 @@ class PdfParser(BaseParser):
 
     def _extract_with_table_settings(
         self, page, settings: dict
-    ) -> list[list[str]] | None:
+    ) -> Optional[List[List[str]]]:
         """Try to extract tables with specific settings."""
         try:
             tables = page.extract_tables(settings)
@@ -31,7 +33,7 @@ class PdfParser(BaseParser):
             pass
         return None
 
-    def _has_valid_data_rows(self, text_parts: list[str]) -> bool:
+    def _has_valid_data_rows(self, text_parts: List[str]) -> bool:
         """Check if extracted text has actual data rows, not just headers."""
         if len(text_parts) < 2:
             return False
@@ -94,8 +96,8 @@ class PdfParser(BaseParser):
         return None
 
     def _extract_transactions_from_table(
-        self, table: list[list[str]], bank_name: Optional[str]
-    ) -> list[ParsedTransaction]:
+        self, table: List[List[str]], bank_name: Optional[str]
+    ) -> List[ParsedTransaction]:
         """Extract transactions from a parsed table based on bank format."""
         transactions = []
 
