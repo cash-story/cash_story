@@ -6,10 +6,13 @@ Run with: uvicorn server:app --host 0.0.0.0 --port 8001
 
 import io
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from auth import require_auth, verify_google_token
 from database import close_db, get_db, init_db
