@@ -324,16 +324,17 @@ class PdfParser(BaseParser):
                         parsed_date = self._parse_date(date_str)
                         if parsed_date:
                             try:
-                                # Log the raw parts for debugging
-                                logger.info(
-                                    f"[PDF Parser] Row at {i}: date={date_str}, "
-                                    f"parts[+1]={parts[i + 1] if i + 1 < len(parts) else 'N/A'}, "
-                                    f"parts[+2]={parts[i + 2] if i + 2 < len(parts) else 'N/A'}, "
-                                    f"parts[+3]={parts[i + 3] if i + 3 < len(parts) else 'N/A'}, "
-                                    f"parts[+4]={parts[i + 4] if i + 4 < len(parts) else 'N/A'}, "
-                                    f"parts[+5]={parts[i + 5] if i + 5 < len(parts) else 'N/A'}, "
-                                    f"parts[+6]={parts[i + 6] if i + 6 < len(parts) else 'N/A'}, "
-                                    f"parts[+7]={parts[i + 7] if i + 7 < len(parts) else 'N/A'}"
+                                # Print raw parts for debugging (print shows in Railway logs)
+                                print(
+                                    f"[TDB] date={date_str} | "
+                                    f"+1={parts[i + 1][:15] if i + 1 < len(parts) else '-'} | "
+                                    f"+2={parts[i + 2][:15] if i + 2 < len(parts) else '-'} | "
+                                    f"+3={parts[i + 3][:15] if i + 3 < len(parts) else '-'} | "
+                                    f"+4={parts[i + 4][:15] if i + 4 < len(parts) else '-'} | "
+                                    f"+5={parts[i + 5][:15] if i + 5 < len(parts) else '-'} | "
+                                    f"+6={parts[i + 6][:15] if i + 6 < len(parts) else '-'} | "
+                                    f"+7={parts[i + 7][:15] if i + 7 < len(parts) else '-'}",
+                                    flush=True,
                                 )
 
                                 # Correct offsets based on TDB format:
