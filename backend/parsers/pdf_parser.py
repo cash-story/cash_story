@@ -287,16 +287,31 @@ class PdfParser(BaseParser):
         return unique_transactions
 
     def _extract_from_tab_separated(self, raw_text: str) -> List[ParsedTransaction]:
-        """Extract from tab-separated single-line format (TDB single page)."""
+        """
+        Extract from tab-separated single-line format (TDB single page).
+
+        TDB columns: Огноо | Теллер | Орлого | Зарлага | Ханш | Харьцсан данс | Үлдэгдэл | Гүйлгээний утга
+        Offsets from date cell:
+          +0 = Date (split: 25.1.1)
+          +1 = Teller ID (numeric, like 1, 2, 3 - NOT the amount!)
+          +2 = Income (Орлого)
+          +3 = Expense (Зарлага)
+          +4 = Exchange Rate (Ханш)
+          +5 = Related Account (Харьцсан данс)
+          +6 = Balance (Үлдэгдэл)
+          +7 = Description (Гүйлгээний утга) - LAST
+        """
         transactions = []
         parts = raw_text.split("\t")
 
         i = 0
-        while i < len(parts) - 6:
+        while i < len(parts) - 7:  # Need at least 8 parts after date
             cell = parts[i].strip()
 
+            # Look for split date pattern: 25.1.1 (yy.mm.dd)
             if re.match(r"^\d{1,2}\.\d{1,2}\.\d{1,2}$", cell):
                 prev_cell = parts[i - 1].strip() if i > 0 else ""
+                # Previous cell should end with year prefix (like "ШИМТГЭЛ20" or just "20")
                 if prev_cell.endswith("20") or prev_cell.endswith("19"):
                     date_parts_match = re.match(
                         r"^(\d{1,2})\.(\d{1,2})\.(\d{1,2})$", cell
@@ -309,11 +324,27 @@ class PdfParser(BaseParser):
                         parsed_date = self._parse_date(date_str)
                         if parsed_date:
                             try:
+                                # Log the raw parts for debugging
+                                logger.info(
+                                    f"[PDF Parser] Row at {i}: date={date_str}, "
+                                    f"parts[+1]={parts[i + 1] if i + 1 < len(parts) else 'N/A'}, "
+                                    f"parts[+2]={parts[i + 2] if i + 2 < len(parts) else 'N/A'}, "
+                                    f"parts[+3]={parts[i + 3] if i + 3 < len(parts) else 'N/A'}, "
+                                    f"parts[+4]={parts[i + 4] if i + 4 < len(parts) else 'N/A'}, "
+                                    f"parts[+5]={parts[i + 5] if i + 5 < len(parts) else 'N/A'}, "
+                                    f"parts[+6]={parts[i + 6] if i + 6 < len(parts) else 'N/A'}, "
+                                    f"parts[+7]={parts[i + 7] if i + 7 < len(parts) else 'N/A'}"
+                                )
+
+                                # Correct offsets based on TDB format:
+                                # +1 = Teller (skip this!)
+                                # +2 = Income (Орлого)
+                                # +3 = Expense (Зарлага)
                                 income_str = (
-                                    parts[i + 3].strip() if i + 3 < len(parts) else "0"
+                                    parts[i + 2].strip() if i + 2 < len(parts) else "0"
                                 )
                                 expense_str = (
-                                    parts[i + 4].strip() if i + 4 < len(parts) else "0"
+                                    parts[i + 3].strip() if i + 3 < len(parts) else "0"
                                 )
 
                                 income = self._parse_amount(income_str)
@@ -322,6 +353,9 @@ class PdfParser(BaseParser):
                                 if expense > 0 and income == 0:
                                     txn_type = "debit"
                                     amount = expense
+                                elif income > 0 and expense == 0:
+                                    txn_type = "credit"
+                                    amount = income
                                 elif income > 0:
                                     txn_type = "credit"
                                     amount = income
@@ -329,16 +363,23 @@ class PdfParser(BaseParser):
                                     i += 1
                                     continue
 
-                                if amount == 0:
+                                # Skip if amount is too small (likely parsing error)
+                                if amount < 10:
                                     i += 1
                                     continue
 
+                                # Description is at the END - look for it after balance
+                                # Try offset +7, +8, or search for text
                                 description = ""
-                                for j in range(i + 5, min(i + 15, len(parts))):
+                                for j in range(i + 7, min(i + 12, len(parts))):
                                     desc_cell = parts[j].strip()
-                                    if not desc_cell or len(desc_cell) < 3:
+                                    if not desc_cell or len(desc_cell) < 2:
                                         continue
+                                    # Skip pure numeric cells
                                     if re.match(r"^[\d,.\s]+$", desc_cell):
+                                        continue
+                                    # Skip very short codes
+                                    if len(desc_cell) < 3:
                                         continue
                                     description = desc_cell
                                     break
@@ -347,13 +388,20 @@ class PdfParser(BaseParser):
                                     :100
                                 ]
 
+                                # Try to get balance from offset +6
+                                balance = None
+                                if i + 6 < len(parts):
+                                    balance = self._parse_amount(parts[i + 6].strip())
+
                                 txn = ParsedTransaction(
                                     date=parsed_date.date(),
                                     description=description or "Гүйлгээ",
                                     amount=amount,
                                     transaction_type=txn_type,
-                                    balance=None,
-                                    raw_data={"parts": parts[i : i + 8]},
+                                    balance=balance
+                                    if balance and balance > 0
+                                    else None,
+                                    raw_data={"parts": parts[i : i + 10]},
                                 )
                                 transactions.append(txn)
 
@@ -365,13 +413,20 @@ class PdfParser(BaseParser):
         return transactions
 
     def _extract_from_lines(self, raw_text: str) -> List[ParsedTransaction]:
-        """Extract from multi-line format with full dates (multi-page PDFs)."""
+        """
+        Extract from multi-line format with full dates (multi-page PDFs).
+
+        TDB columns: Огноо | Теллер | Орлого | Зарлага | Ханш | Харьцсан данс | Үлдэгдэл | Гүйлгээний утга
+        In line format, amounts appear as: 0.00 for income, then 500.00 for expense (or vice versa)
+        The FIRST amount after teller is Income, SECOND is Expense.
+        Description is typically at the END of the line.
+        """
         transactions = []
 
         # Split by newlines
         lines = raw_text.split("\n")
 
-        # Pattern for full date: 2026.2.1 or 2026.02.01 or 2026-02-01
+        # Pattern for full date: 2025.2.1 or 2025.02.01 or 2025-02-01
         date_pattern = r"(20\d{2}[.\-/]\d{1,2}[.\-/]\d{1,2})"
         # Pattern for amounts: 0.00, 500.00, 20,000.00
         amount_pattern = r"([\d,]+\.\d{2})"
@@ -385,7 +440,7 @@ class PdfParser(BaseParser):
             line_lower = line.lower()
             if any(
                 kw in line_lower
-                for kw in ["огноо", "теллер", "нийт:", "total", "үлдэгдэл:"]
+                for kw in ["огноо", "теллер", "нийт:", "total", "үлдэгдэл:", "хамра"]
             ):
                 continue
 
@@ -403,7 +458,8 @@ class PdfParser(BaseParser):
             if len(amounts) < 2:
                 continue
 
-            # For TDB: typically income then expense columns
+            # TDB format: amounts[0] = Income (Орлого), amounts[1] = Expense (Зарлага)
+            # One will be 0.00, the other will have the actual amount
             income = self._parse_amount(amounts[0])
             expense = self._parse_amount(amounts[1])
 
@@ -419,20 +475,25 @@ class PdfParser(BaseParser):
             else:
                 continue
 
-            if amount == 0:
+            # Skip if amount is too small (likely parsing error - teller ID is 1-9)
+            if amount < 10:
                 continue
 
-            # Extract description - Mongolian/English text
+            # Extract description - it's typically the LAST text part on the line
+            # Look for Mongolian/English text
             desc_parts = re.findall(
-                r"[А-Яа-яҮүӨөA-Za-z][А-Яа-яҮүӨөA-Za-z\s\-:()]+", line, re.UNICODE
+                r"[А-Яа-яҮүӨөA-Za-z][А-Яа-яҮүӨөA-Za-z\s\-:()0-9]+", line, re.UNICODE
             )
             description = ""
-            for part in desc_parts:
+            # Take the LAST meaningful text part (description is at the end in TDB)
+            for part in reversed(desc_parts):
                 part = part.strip()
-                # Skip short parts and header-like text
+                # Skip short parts, header-like text, and AM/PM
                 if len(part) > 3 and part.lower() not in ["am", "pm"]:
-                    description = part[:100]
-                    break
+                    # Skip if it's just a number with text prefix
+                    if not re.match(r"^[A-Za-z]{1,2}\d+$", part):
+                        description = part[:100]
+                        break
 
             txn = ParsedTransaction(
                 date=parsed_date.date(),
